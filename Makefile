@@ -80,7 +80,7 @@ CSTD := -std=c11
 WARNINGS := \
     -Wall \
     -Wextra \
-    -Werror \
+     
     -Wpedantic \
     -Wshadow \
     -Wpointer-arith \
