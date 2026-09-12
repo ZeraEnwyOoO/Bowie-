@@ -1,0 +1,365 @@
+# ============================================================================
+# Wingo — P2P Internet Sharing Tool (Repo: Bowie)
+# Copyright (C) 2024 ASBM Team
+#
+# Git ignore rules for the Bowie project.
+#
+# This file tells Git which files and directories to ignore.
+# ============================================================================
+
+# ============================================================================
+# BUILD ARTIFACTS
+# ============================================================================
+
+# Build directory (contains all compiled output)
+build/
+
+# Object files
+*.o
+*.obj
+*.lo
+*.la
+
+# Static libraries
+*.a
+*.lib
+
+# Shared libraries
+*.so
+*.so.*
+*.dylib
+*.dll
+
+# Executables
+*.exe
+*.out
+*.app
+*.bin
+
+# ============================================================================
+# TEST ARTIFACTS
+# ============================================================================
+
+# Test binaries (already covered by build/, but be explicit)
+test_buffer
+test_list
+test_queue
+test_hashmap
+
+# Test output
+*.test
+*.log
+test-results/
+test-output/
+
+# Check Framework output
+*.check
+check-results.xml
+
+# ============================================================================
+# COVERAGE
+# ============================================================================
+
+# gcov
+*.gcov
+*.gcda
+*.gcno
+*.gcov.json.gz
+
+# lcov
+coverage/
+*.info
+
+# ============================================================================
+# PROFILING
+# ============================================================================
+
+# gprof
+gmon.out
+
+# perf
+perf.data
+perf.data.old
+
+# Valgrind
+valgrind-*.log
+vgcore.*
+
+# ============================================================================
+# DEPENDENCIES
+# ============================================================================
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile.cmake
+Makefile.configure
+
+# Autotools
+aclocal.m4
+autom4te.cache/
+config.log
+config.status
+configure
+Makefile.in
+
+# pkg-config
+*.pc
+
+# ============================================================================
+# EDITOR / IDE
+# ============================================================================
+
+# Vim
+*.swp
+*.swo
+*.swn
+*~
+.vim/
+
+# Emacs
+*~
+\#*\#
+.\#*
+auto-save-list/
+
+# VS Code
+.vscode/
+!.vscode/settings.json.example
+!.vscode/launch.json.example
+!.vscode/tasks.json.example
+
+# CLion
+.idea/
+*.iml
+
+# Eclipse
+.project
+.cproject
+.settings/
+
+# NetBeans
+nbproject/
+
+# Sublime Text
+*.sublime-project
+*.sublime-workspace
+
+# ============================================================================
+# OS FILES
+# ============================================================================
+
+# Linux
+*~
+.directory
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# ============================================================================
+# LOGS AND RUNTIME
+# ============================================================================
+
+# Log files
+*.log
+logs/
+log/
+
+# PID files
+*.pid
+*.pid.lock
+
+# Socket files
+*.sock
+
+# Lock files
+*.lock
+
+# Runtime data
+run/
+var/run/
+
+# ============================================================================
+# CONFIGURATION (LOCAL)
+# ============================================================================
+
+# Local config files (keep .example versions)
+config.local
+*.local
+!*.local.example
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Secrets (NEVER commit)
+*.key
+*.pem
+*.crt
+*.cert
+secrets/
+private/
+
+# ============================================================================
+# DATABASE
+# ============================================================================
+
+*.db
+*.sqlite
+*.sqlite3
+
+# ============================================================================
+# BACKUP FILES
+# ============================================================================
+
+*.bak
+*.backup
+*.old
+*.orig
+*.rej
+
+# ============================================================================
+# PATCHES
+# ============================================================================
+
+*.patch
+*.diff
+
+# ============================================================================
+# TEMPORARY FILES
+# ============================================================================
+
+tmp/
+temp/
+*.tmp
+*.temp
+*.swp
+
+# ============================================================================
+# DOCUMENTATION BUILD
+# ============================================================================
+
+docs/_build/
+docs/build/
+site/
+*.html
+
+# ============================================================================
+# PACKAGE MANAGER
+# ============================================================================
+
+# npm (if used for tooling)
+node_modules/
+package-lock.json
+yarn.lock
+
+# Python (if used for scripts)
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.tox/
+.venv/
+venv/
+
+# Ruby (if used for scripts)
+.bundle/
+vendor/bundle/
+
+# ============================================================================
+# CI/CD
+# ============================================================================
+
+# GitHub Actions
+.github/workflows/*.local.yml
+
+# GitLab CI
+.gitlab-ci.local.yml
+
+# Travis CI
+.travis.local.yml
+
+# ============================================================================
+# ARCHIVE FILES
+# ============================================================================
+
+*.tar
+*.tar.gz
+*.tgz
+*.zip
+*.rar
+*.7z
+
+# ============================================================================
+# PROJECT-SPECIFIC
+# ============================================================================
+
+# Bowie runtime files
+bowie.conf
+bowie.pid
+bowie.sock
+
+# DHT cache
+dht.cache
+dht.dat
+
+# Peer database
+peers.db
+peers.cache
+
+# Relay cache
+relay.cache
+relay.dat
+
+# Session files
+sessions/
+session_*
+
+# Tunnel state
+tunnel.state
+tun.state
+
+# ============================================================================
+# EXCEPTIONS (DO NOT IGNORE)
+# ============================================================================
+
+# Keep example config files
+!config/*.example
+!config/*.conf.example
+
+# Keep documentation
+!docs/**/*.md
+!docs/**/*.txt
+
+# Keep test fixtures
+!tests/fixtures/*
+!tests/data/*
+
+# Keep scripts
+!scripts/*.sh
+
+# Keep license and readme
+!LICENSE
+!README.md
+!CHANGELOG.md
+!CONTRIBUTING.md
+
+# Keep Makefile
+!Makefile
+
+# Keep .gitignore itself
+!.gitignore
+
+# ============================================================================
+# END OF FILE
+# ============================================================================
