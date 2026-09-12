@@ -20,6 +20,7 @@
 #define WINGO_LOG_H
 
 #include "wingo/common.h"
+#include "wingo/util/buffer.h"
 
 /* ============================================================================
  * LOG LEVELS
