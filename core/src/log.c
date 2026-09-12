@@ -128,10 +128,63 @@ static bool log_needs_rotation(void)
     return (wingo_size)st.st_size >= log_state.max_file_size;
 }
 
+/*
+ * Safe snprintf wrapper.
+ *
+ * Returns WINGO_SUCCESS if the string fits, WINGO_ERR_OVERFLOW otherwise.
+ *
+ * This eliminates -Wformat-truncation warnings by explicitly checking
+ * the return value of snprintf.
+ */
+static wingo_error_t safe_snprintf(char *buf, wingo_size size,
+                                   const char *fmt, ...)
+{
+    va_list args;
+    int written;
+
+    if (buf == NULL || size == 0 || fmt == NULL) {
+        return WINGO_ERR_INVALID_ARG;
+    }
+
+    va_start(args, fmt);
+    written = vsnprintf(buf, size, fmt, args);
+    va_end(args);
+
+    if (written < 0) {
+        return WINGO_ERR_GENERIC;
+    }
+
+    if ((wingo_size)written >= size) {
+        return WINGO_ERR_OVERFLOW;
+    }
+
+    return WINGO_SUCCESS;
+}
+
+/*
+ * Safe string copy with guaranteed null-termination.
+ *
+ * This eliminates -Wstringop-truncation warnings by explicitly
+ * null-terminating the destination buffer.
+ */
+static void safe_strcpy(char *dst, wingo_size dst_size, const char *src)
+{
+    if (dst == NULL || dst_size == 0) return;
+
+    if (src == NULL) {
+        dst[0] = '\0';
+        return;
+    }
+
+    strncpy(dst, src, dst_size - 1);
+    dst[dst_size - 1] = '\0';
+}
+
 static wingo_error_t log_rotate_files(void)
 {
     char old_path[WINGO_MAX_PATH];
     char new_path[WINGO_MAX_PATH];
+    wingo_error_t rc;
     int i;
 
     if (!log_state.rotate || log_state.file_path[0] == '\0') {
@@ -143,15 +196,26 @@ static wingo_error_t log_rotate_files(void)
         log_state.file = NULL;
     }
 
-    snprintf(old_path, sizeof(old_path), "%s.%d",
-             log_state.file_path, log_state.max_files);
-    unlink(old_path);
+    /* Delete oldest file */
+    rc = safe_snprintf(old_path, sizeof(old_path), "%s.%d",
+                       log_state.file_path, log_state.max_files);
+    if (rc == WINGO_SUCCESS) {
+        unlink(old_path);
+    }
 
+    /* Shift files */
     for (i = log_state.max_files - 1; i >= 1; i--) {
-        snprintf(old_path, sizeof(old_path), "%s.%d",
-                 log_state.file_path, i);
-        snprintf(new_path, sizeof(new_path), "%s.%d",
-                 log_state.file_path, i + 1);
+        rc = safe_snprintf(old_path, sizeof(old_path), "%s.%d",
+                           log_state.file_path, i);
+        if (rc != WINGO_SUCCESS) {
+            return rc;
+        }
+
+        rc = safe_snprintf(new_path, sizeof(new_path), "%s.%d",
+                           log_state.file_path, i + 1);
+        if (rc != WINGO_SUCCESS) {
+            return rc;
+        }
 
         if (rename(old_path, new_path) != 0 && errno != ENOENT) {
             fprintf(stderr, "Warning: failed to rotate %s -> %s: %s\n",
@@ -159,13 +223,19 @@ static wingo_error_t log_rotate_files(void)
         }
     }
 
-    snprintf(new_path, sizeof(new_path), "%s.1", log_state.file_path);
+    /* Rename current log to .1 */
+    rc = safe_snprintf(new_path, sizeof(new_path), "%s.1",
+                       log_state.file_path);
+    if (rc != WINGO_SUCCESS) {
+        return rc;
+    }
 
     if (rename(log_state.file_path, new_path) != 0 && errno != ENOENT) {
         fprintf(stderr, "Warning: failed to rename %s -> %s: %s\n",
                 log_state.file_path, new_path, strerror(errno));
     }
 
+    /* Reopen log file */
     log_state.file = fopen(log_state.file_path, "a");
     if (log_state.file == NULL) {
         return WINGO_ERR_FILE_OPEN;
@@ -208,8 +278,9 @@ wingo_error_t wingo_log_init(const wingo_log_config_t *config)
         log_state.flush         = config->flush;
 
         if (config->file_path[0] != '\0') {
-            strncpy(log_state.file_path, config->file_path,
-                    sizeof(log_state.file_path) - 1);
+            safe_strcpy(log_state.file_path,
+                        sizeof(log_state.file_path),
+                        config->file_path);
         }
     }
 
@@ -323,8 +394,7 @@ wingo_error_t wingo_log_set_file(const char *path)
     }
 
     log_state.file = new_file;
-    strncpy(log_state.file_path, path, sizeof(log_state.file_path) - 1);
-    log_state.file_path[sizeof(log_state.file_path) - 1] = '\0';
+    safe_strcpy(log_state.file_path, sizeof(log_state.file_path), path);
 
     pthread_mutex_unlock(&log_mutex);
     return WINGO_SUCCESS;
@@ -385,13 +455,13 @@ void wingo_log_vwrite(wingo_log_level_t level,
     if (timestamp[0] != '\0') {
         n = snprintf(line_buf + pos, sizeof(line_buf) - pos,
                      "[%s] ", timestamp);
-        if (n > 0) pos += n;
+        if (n > 0 && (wingo_size)n < sizeof(line_buf) - pos) pos += n;
     }
 
     if (tid[0] != '\0') {
         n = snprintf(line_buf + pos, sizeof(line_buf) - pos,
                      "[%s] ", tid);
-        if (n > 0) pos += n;
+        if (n > 0 && (wingo_size)n < sizeof(line_buf) - pos) pos += n;
     }
 
     if (log_state.flags & WINGO_LOG_FLAG_COLOR) {
@@ -402,7 +472,7 @@ void wingo_log_vwrite(wingo_log_level_t level,
         n = snprintf(line_buf + pos, sizeof(line_buf) - pos,
                      "%-6s ", level_name);
     }
-    if (n > 0) pos += n;
+    if (n > 0 && (wingo_size)n < sizeof(line_buf) - pos) pos += n;
 
     if (log_state.flags & WINGO_LOG_FLAG_FILE) {
         if (log_state.flags & WINGO_LOG_FLAG_LINE) {
@@ -412,18 +482,18 @@ void wingo_log_vwrite(wingo_log_level_t level,
             n = snprintf(line_buf + pos, sizeof(line_buf) - pos,
                          "[%s] ", file_name);
         }
-        if (n > 0) pos += n;
+        if (n > 0 && (wingo_size)n < sizeof(line_buf) - pos) pos += n;
     }
 
     if (log_state.flags & WINGO_LOG_FLAG_FUNC) {
         n = snprintf(line_buf + pos, sizeof(line_buf) - pos,
                      "%s(): ", func != NULL ? func : "?");
-        if (n > 0) pos += n;
+        if (n > 0 && (wingo_size)n < sizeof(line_buf) - pos) pos += n;
     }
 
     n = snprintf(line_buf + pos, sizeof(line_buf) - pos,
                  "%s\n", message);
-    if (n > 0) pos += n;
+    if (n > 0 && (wingo_size)n < sizeof(line_buf) - pos) pos += n;
 
     pthread_mutex_lock(&log_mutex);
 
@@ -497,7 +567,7 @@ void wingo_log_hex(wingo_log_level_t level,
 
         n = snprintf(line_buf + pos, sizeof(line_buf) - pos,
                      "%04zx: ", (size_t)offset);
-        if (n > 0) pos += n;
+        if (n > 0 && (wingo_size)n < sizeof(line_buf) - pos) pos += n;
 
         for (i = 0; i < 16; i++) {
             if (offset + i < len) {
@@ -506,26 +576,26 @@ void wingo_log_hex(wingo_log_level_t level,
             } else {
                 n = snprintf(line_buf + pos, sizeof(line_buf) - pos, "   ");
             }
-            if (n > 0) pos += n;
+            if (n > 0 && (wingo_size)n < sizeof(line_buf) - pos) pos += n;
 
             if (i == 7) {
                 n = snprintf(line_buf + pos, sizeof(line_buf) - pos, " ");
-                if (n > 0) pos += n;
+                if (n > 0 && (wingo_size)n < sizeof(line_buf) - pos) pos += n;
             }
         }
 
         n = snprintf(line_buf + pos, sizeof(line_buf) - pos, " |");
-        if (n > 0) pos += n;
+        if (n > 0 && (wingo_size)n < sizeof(line_buf) - pos) pos += n;
 
         for (i = 0; i < 16 && offset + i < len; i++) {
             wingo_u8 c = bytes[offset + i];
             n = snprintf(line_buf + pos, sizeof(line_buf) - pos,
                          "%c", (c >= 32 && c <= 126) ? c : '.');
-            if (n > 0) pos += n;
+            if (n > 0 && (wingo_size)n < sizeof(line_buf) - pos) pos += n;
         }
 
         n = snprintf(line_buf + pos, sizeof(line_buf) - pos, "|");
-        if (n > 0) pos += n;
+        if (n > 0 && (wingo_size)n < sizeof(line_buf) - pos) pos += n;
 
         wingo_log_write(level, file, line, func, "%s", line_buf);
     }
