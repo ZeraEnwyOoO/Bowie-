@@ -1,3 +1,5 @@
+ 
+ 
  /*
  * Wingo — P2P Internet Sharing Tool (Repo: Bowie)
  * Copyright (C) 2024 ASBM Team
@@ -164,11 +166,20 @@ static wingo_error_t safe_snprintf(char *buf, wingo_size size,
 /*
  * Safe string copy with guaranteed null-termination.
  *
- * This eliminates -Wstringop-truncation warnings by explicitly
- * null-terminating the destination buffer.
+ * This eliminates -Wstringop-truncation warnings by:
+ *   1. Computing the actual length with strlen()
+ *   2. Using memcpy() instead of strncpy()
+ *   3. Explicitly null-terminating the destination
+ *
+ * GCC's -Wstringop-truncation warning is triggered specifically by
+ * strncpy() when it cannot prove the source is shorter than the
+ * destination. Using memcpy() with an explicit length avoids this
+ * entirely while being equally safe.
  */
 static void safe_strcpy(char *dst, wingo_size dst_size, const char *src)
 {
+    wingo_size len;
+
     if (dst == NULL || dst_size == 0) return;
 
     if (src == NULL) {
@@ -176,8 +187,20 @@ static void safe_strcpy(char *dst, wingo_size dst_size, const char *src)
         return;
     }
 
-    strncpy(dst, src, dst_size - 1);
-    dst[dst_size - 1] = '\0';
+    len = strlen(src);
+
+    /* Clamp to destination size - 1 (leave room for null terminator) */
+    if (len >= dst_size) {
+        len = dst_size - 1;
+    }
+
+    /* Copy the bytes */
+    if (len > 0) {
+        memcpy(dst, src, len);
+    }
+
+    /* Explicit null terminator */
+    dst[len] = '\0';
 }
 
 static wingo_error_t log_rotate_files(void)
@@ -203,7 +226,7 @@ static wingo_error_t log_rotate_files(void)
         unlink(old_path);
     }
 
-    /* Shift files */
+    /* Shift files: N-1 -> N, N-2 -> N-1, ..., 1 -> 2 */
     for (i = log_state.max_files - 1; i >= 1; i--) {
         rc = safe_snprintf(old_path, sizeof(old_path), "%s.%d",
                            log_state.file_path, i);
