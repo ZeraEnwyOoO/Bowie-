@@ -1,4 +1,4 @@
-/*
+ /*
  * Wingo — P2P Internet Sharing Tool (Repo: Bowie)
  * Copyright (C) 2024 ASBM Team
  *
@@ -32,7 +32,9 @@
  *   - Utility macros
  *   - Compiler attributes
  *   - Endianness helpers
- *   - Error codes (via error.h)
+ *
+ * NOTE: wingo_buf_t is defined in wingo/util/buffer.h, NOT here.
+ *       This avoids duplicate type definitions.
  *
  * ============================================================================
  */
@@ -467,8 +469,7 @@ typedef enum {
 /*
  * Return codes.
  *
- * NOTE: Do NOT duplicate values. If you need more, add new ones
- * with unique values.
+ * NOTE: Do NOT duplicate values.
  */
 typedef enum {
     WINGO_OK        =  0,
@@ -487,17 +488,19 @@ typedef enum {
  * COMMON STRUCTURES
  * ============================================================================ */
 
+/*
+ * Time value (seconds + microseconds).
+ */
+
 typedef struct {
     wingo_i64 sec;
     wingo_i64 usec;
 } wingo_time_t;
 
-typedef struct {
-    wingo_u8   *data;
-    wingo_size  len;
-    wingo_size  cap;
-    wingo_size  read;
-} wingo_buf_t;
+/*
+ * NOTE: wingo_buf_t is defined in wingo/util/buffer.h
+ *       Do NOT define it here to avoid duplicate type errors.
+ */
 
 /* ============================================================================
  * HELPER FUNCTIONS (INLINE)
@@ -552,11 +555,7 @@ static inline void wingo_id_to_hex(const wingo_id *id, char *out)
  * Include error.h at the END of common.h.
  *
  * This is necessary because error.h includes common.h for types.
- * By including it here, any file that includes common.h will
- * automatically get the error codes too.
- *
- * We use a guard to prevent infinite recursion:
- *   common.h -> error.h -> common.h (guard prevents re-entry)
+ * The include guard in error.h prevents infinite recursion.
  */
 #include "wingo/error.h"
 
