@@ -1,4 +1,4 @@
-/*
+ /*
  * Wingo — P2P Internet Sharing Tool (Repo: Bowie)
  * Copyright (C) 2024 ASBM Team
  *
@@ -34,37 +34,20 @@
  * INTERNAL CONSTANTS
  * ============================================================================ */
 
-static const char *log_level_names[] = {
-    "TRACE",
-    "DEBUG",
-    "INFO",
-    "NOTICE",
-    "WARN",
-    "ERROR",
-    "FATAL",
-    "NONE"
+static const char *const log_level_names[] = {
+    "TRACE", "DEBUG", "INFO", "NOTICE",
+    "WARN", "ERROR", "FATAL", "NONE"
 };
 
-static const char *log_level_colors[] = {
-    WINGO_COLOR_DIM,
-    WINGO_COLOR_CYAN,
-    WINGO_COLOR_GREEN,
-    WINGO_COLOR_BLUE,
-    WINGO_COLOR_YELLOW,
-    WINGO_COLOR_RED,
-    WINGO_COLOR_RED WINGO_COLOR_BOLD,
-    WINGO_COLOR_RESET
+static const char *const log_level_colors[] = {
+    WINGO_COLOR_DIM, WINGO_COLOR_CYAN, WINGO_COLOR_GREEN,
+    WINGO_COLOR_BLUE, WINGO_COLOR_YELLOW, WINGO_COLOR_RED,
+    WINGO_COLOR_RED WINGO_COLOR_BOLD, WINGO_COLOR_RESET
 };
 
 static const int log_level_syslog[] = {
-    LOG_DEBUG,
-    LOG_DEBUG,
-    LOG_INFO,
-    LOG_NOTICE,
-    LOG_WARNING,
-    LOG_ERR,
-    LOG_CRIT,
-    LOG_EMERG
+    LOG_DEBUG, LOG_DEBUG, LOG_INFO, LOG_NOTICE,
+    LOG_WARNING, LOG_ERR, LOG_CRIT, LOG_EMERG
 };
 
 /* ============================================================================
@@ -109,9 +92,7 @@ static void log_timestamp(char *buf, wingo_size size)
     struct tm tm;
     time_t sec;
 
-    if (buf == NULL || size == 0) {
-        return;
-    }
+    if (buf == NULL || size == 0) return;
 
     if (wingo_time_realtime(&ts) != WINGO_SUCCESS) {
         buf[0] = '\0';
@@ -119,7 +100,6 @@ static void log_timestamp(char *buf, wingo_size size)
     }
 
     sec = (time_t)ts.sec;
-
     if (localtime_r(&sec, &tm) == NULL) {
         buf[0] = '\0';
         return;
@@ -127,23 +107,15 @@ static void log_timestamp(char *buf, wingo_size size)
 
     snprintf(buf, size,
              "%04d-%02d-%02d %02d:%02d:%02d.%03d",
-             tm.tm_year + 1900,
-             tm.tm_mon + 1,
-             tm.tm_mday,
-             tm.tm_hour,
-             tm.tm_min,
-             tm.tm_sec,
+             tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday,
+             tm.tm_hour, tm.tm_min, tm.tm_sec,
              (int)(ts.nsec / 1000000));
 }
 
 static void log_thread_id(char *buf, wingo_size size)
 {
     unsigned long tid;
-
-    if (buf == NULL || size == 0) {
-        return;
-    }
-
+    if (buf == NULL || size == 0) return;
     tid = (unsigned long)pthread_self();
     snprintf(buf, size, "%lu", tid);
 }
@@ -151,15 +123,8 @@ static void log_thread_id(char *buf, wingo_size size)
 static bool log_needs_rotation(void)
 {
     struct stat st;
-
-    if (log_state.file == NULL || log_state.file_path[0] == '\0') {
-        return false;
-    }
-
-    if (stat(log_state.file_path, &st) != 0) {
-        return false;
-    }
-
+    if (log_state.file == NULL || log_state.file_path[0] == '\0') return false;
+    if (stat(log_state.file_path, &st) != 0) return false;
     return (wingo_size)st.st_size >= log_state.max_file_size;
 }
 
@@ -211,15 +176,9 @@ static wingo_error_t log_rotate_files(void)
 
 static void log_write_to_file(FILE *f, const char *line)
 {
-    if (f == NULL || line == NULL) {
-        return;
-    }
-
+    if (f == NULL || line == NULL) return;
     fputs(line, f);
-
-    if (log_state.flush) {
-        fflush(f);
-    }
+    if (log_state.flush) fflush(f);
 }
 
 /* ============================================================================
@@ -269,9 +228,7 @@ wingo_error_t wingo_log_init(const wingo_log_config_t *config)
     }
 
     log_state.initialized = true;
-
     pthread_mutex_unlock(&log_mutex);
-
     return WINGO_SUCCESS;
 }
 
@@ -296,7 +253,6 @@ void wingo_log_shutdown(void)
     }
 
     log_state.initialized = false;
-
     pthread_mutex_unlock(&log_mutex);
 }
 
@@ -310,11 +266,9 @@ void wingo_log_set_level(wingo_log_level_t level)
 wingo_log_level_t wingo_log_get_level(void)
 {
     wingo_log_level_t level;
-
     pthread_mutex_lock(&log_mutex);
     level = log_state.level;
     pthread_mutex_unlock(&log_mutex);
-
     return level;
 }
 
@@ -328,11 +282,9 @@ void wingo_log_set_targets(wingo_u32 targets)
 wingo_u32 wingo_log_get_targets(void)
 {
     wingo_u32 targets;
-
     pthread_mutex_lock(&log_mutex);
     targets = log_state.targets;
     pthread_mutex_unlock(&log_mutex);
-
     return targets;
 }
 
@@ -346,11 +298,9 @@ void wingo_log_set_flags(wingo_u32 flags)
 wingo_u32 wingo_log_get_flags(void)
 {
     wingo_u32 flags;
-
     pthread_mutex_lock(&log_mutex);
     flags = log_state.flags;
     pthread_mutex_unlock(&log_mutex);
-
     return flags;
 }
 
@@ -358,9 +308,7 @@ wingo_error_t wingo_log_set_file(const char *path)
 {
     FILE *new_file = NULL;
 
-    if (path == NULL) {
-        return WINGO_ERR_INVALID_ARG;
-    }
+    if (path == NULL) return WINGO_ERR_INVALID_ARG;
 
     pthread_mutex_lock(&log_mutex);
 
@@ -379,31 +327,21 @@ wingo_error_t wingo_log_set_file(const char *path)
     log_state.file_path[sizeof(log_state.file_path) - 1] = '\0';
 
     pthread_mutex_unlock(&log_mutex);
-
     return WINGO_SUCCESS;
 }
 
 bool wingo_log_is_enabled(wingo_log_level_t level)
 {
     bool enabled;
-
     pthread_mutex_lock(&log_mutex);
     enabled = (level >= log_state.level) && (log_state.level != WINGO_LOG_NONE);
     pthread_mutex_unlock(&log_mutex);
-
     return enabled;
 }
 
-/* ============================================================================
- * LOG WRITE
- * ============================================================================ */
-
 void wingo_log_vwrite(wingo_log_level_t level,
-                      const char *file,
-                      int line,
-                      const char *func,
-                      const char *fmt,
-                      va_list args)
+                      const char *file, int line, const char *func,
+                      const char *fmt, va_list args)
 {
     char timestamp[64];
     char tid[32];
@@ -421,11 +359,9 @@ void wingo_log_vwrite(wingo_log_level_t level,
     }
 
     level_name  = (level < WINGO_ARRAY_SIZE(log_level_names))
-                ? log_level_names[level]
-                : "UNKNOWN";
+                ? log_level_names[level] : "UNKNOWN";
     level_color = (level < WINGO_ARRAY_SIZE(log_level_colors))
-                ? log_level_colors[level]
-                : "";
+                ? log_level_colors[level] : "";
 
     slash = (file != NULL) ? strrchr(file, '/') : NULL;
     file_name = (slash != NULL) ? slash + 1 : (file != NULL ? file : "?");
@@ -503,14 +439,12 @@ void wingo_log_vwrite(wingo_log_level_t level,
         if (log_state.rotate && log_needs_rotation()) {
             log_rotate_files();
         }
-
         log_write_to_file(log_state.file, line_buf);
     }
 
     if (log_state.use_syslog && (log_state.targets & WINGO_LOG_TARGET_SYSLOG)) {
         int priority = (level < WINGO_ARRAY_SIZE(log_level_syslog))
-                     ? log_level_syslog[level]
-                     : LOG_INFO;
+                     ? log_level_syslog[level] : LOG_INFO;
         syslog(priority, "%s", message);
     }
 
@@ -518,13 +452,10 @@ void wingo_log_vwrite(wingo_log_level_t level,
 }
 
 void wingo_log_write(wingo_log_level_t level,
-                     const char *file,
-                     int line,
-                     const char *func,
+                     const char *file, int line, const char *func,
                      const char *fmt, ...)
 {
     va_list args;
-
     va_start(args, fmt);
     wingo_log_vwrite(level, file, line, func, fmt, args);
     va_end(args);
@@ -533,51 +464,32 @@ void wingo_log_write(wingo_log_level_t level,
 void wingo_log_flush(void)
 {
     pthread_mutex_lock(&log_mutex);
-
-    if (log_state.file != NULL) {
-        fflush(log_state.file);
-    }
-
+    if (log_state.file != NULL) fflush(log_state.file);
     fflush(stdout);
     fflush(stderr);
-
     pthread_mutex_unlock(&log_mutex);
 }
 
 wingo_error_t wingo_log_rotate(void)
 {
     wingo_error_t rc;
-
     pthread_mutex_lock(&log_mutex);
     rc = log_rotate_files();
     pthread_mutex_unlock(&log_mutex);
-
     return rc;
 }
 
-/* ============================================================================
- * HEX DUMP
- * ============================================================================ */
-
 void wingo_log_hex(wingo_log_level_t level,
-                   const char *file,
-                   int line,
-                   const char *func,
-                   const void *data,
-                   wingo_size len)
+                   const char *file, int line, const char *func,
+                   const void *data, wingo_size len)
 {
     const wingo_u8 *bytes = (const wingo_u8 *)data;
     char line_buf[128];
     wingo_size i;
     wingo_size offset;
 
-    if (data == NULL || len == 0) {
-        return;
-    }
-
-    if (level < log_state.level || log_state.level == WINGO_LOG_NONE) {
-        return;
-    }
+    if (data == NULL || len == 0) return;
+    if (level < log_state.level || log_state.level == WINGO_LOG_NONE) return;
 
     for (offset = 0; offset < len; offset += 16) {
         int pos = 0;
@@ -620,18 +532,12 @@ void wingo_log_hex(wingo_log_level_t level,
 }
 
 void wingo_log_buf(wingo_log_level_t level,
-                   const char *file,
-                   int line,
-                   const char *func,
+                   const char *file, int line, const char *func,
                    const wingo_buf_t *buf)
 {
-    if (buf == NULL) {
-        return;
-    }
-
+    if (buf == NULL) return;
     wingo_log_write(level, file, line, func,
                     "Buffer[cap=%zu, len=%zu, read=%zu]",
                     buf->cap, buf->len, buf->read);
-
     wingo_log_hex(level, file, line, func, buf->data, buf->len);
 }
