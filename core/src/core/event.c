@@ -26,6 +26,8 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <errno.h>
+#include <pthread.h>
+#include <limits.h>
 #include <signal.h>
 #include <sys/epoll.h>
 #include <sys/eventfd.h>
