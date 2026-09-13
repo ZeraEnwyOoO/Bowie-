@@ -1,4 +1,4 @@
-/*
+ /*
  * Wingo — P2P Internet Sharing Tool (Repo: Bowie)
  * Copyright (C) 2024 ASBM Team
  *
@@ -25,21 +25,13 @@
 #include <unistd.h>
 #include <errno.h>
 #include <sched.h>
+#include <pthread.h>
 #include <sys/syscall.h>
 
 /* ============================================================================
  * INTERNAL CONSTANTS
  * ============================================================================ */
 
-/*
- * Default thread pool queue size (unlimited).
- */
-#define THREAD_POOL_DEFAULT_QUEUE_SIZE  0
-
-/*
- * Maximum thread name length (including null terminator).
- * Linux limits this to 16 bytes (TASK_COMM_LEN).
- */
 #define THREAD_NAME_MAX                 16
 
 /* ============================================================================
@@ -47,27 +39,21 @@
  * ============================================================================ */
 
 struct wingo_thread {
-    /* ----- pthread ----- */
     pthread_t               handle;
     bool                    handle_valid;
 
-    /* ----- Callback ----- */
     wingo_thread_func_t     func;
     void                   *arg;
     void                   *retval;
 
-    /* ----- State ----- */
     wingo_thread_state_t    state;
 
-    /* ----- Control ----- */
     volatile bool           stop_requested;
     volatile bool           running;
 
-    /* ----- Identity ----- */
     wingo_u64               id;
     char                    name[THREAD_NAME_MAX];
 
-    /* ----- Synchronization ----- */
     pthread_mutex_t         mutex;
     pthread_cond_t          cond;
 };
@@ -76,38 +62,27 @@ struct wingo_thread {
  * THREAD POOL STRUCTURE
  * ============================================================================ */
 
-/*
- * Thread pool worker.
- */
 typedef struct {
     pthread_t               handle;
     wingo_thread_pool_t    *pool;
     int                     index;
 } pool_worker_t;
 
-/*
- * Thread pool.
- */
 struct wingo_thread_pool {
-    /* ----- Workers ----- */
     pool_worker_t          *workers;
     int                     num_workers;
 
-    /* ----- Task queue ----- */
     wingo_queue_t          *tasks;
     wingo_size              queue_size;
     wingo_size              queue_count;
 
-    /* ----- State ----- */
     volatile bool           running;
     volatile bool           stop_requested;
 
-    /* ----- Statistics ----- */
     volatile wingo_u64      stat_total;
     volatile wingo_u64      stat_active;
     volatile wingo_u64      stat_pending;
 
-    /* ----- Synchronization ----- */
     pthread_mutex_t         mutex;
     pthread_cond_t          cond_not_empty;
     pthread_cond_t          cond_not_full;
@@ -118,9 +93,6 @@ struct wingo_thread_pool {
  * INTERNAL HELPERS
  * ============================================================================ */
 
-/*
- * Set current thread name (Linux-specific).
- */
 static void set_thread_name(const char *name)
 {
     if (name == NULL) {
@@ -128,19 +100,12 @@ static void set_thread_name(const char *name)
     }
 
 #ifdef __linux__
-    /*
-     * Linux: use prctl() or pthread_setname_np().
-     * pthread_setname_np() is limited to 16 chars.
-     */
     pthread_setname_np(pthread_self(), name);
 #else
     WINGO_UNUSED(name);
 #endif
 }
 
-/*
- * Get current thread ID (Linux-specific).
- */
 static wingo_u64 get_thread_id(void)
 {
 #ifdef __linux__
@@ -154,37 +119,26 @@ static wingo_u64 get_thread_id(void)
  * THREAD LIFECYCLE
  * ============================================================================ */
 
-/*
- * Thread wrapper function.
- *
- * This is what pthread_create() calls. It invokes the user's
- * function and stores the return value.
- */
 static void *thread_wrapper(void *arg)
 {
     wingo_thread_t *thread = (wingo_thread_t *)arg;
 
-    /* Set thread name */
     if (thread->name[0] != '\0') {
         set_thread_name(thread->name);
     }
 
-    /* Get thread ID */
     thread->id = get_thread_id();
 
-    /* Mark as running */
     pthread_mutex_lock(&thread->mutex);
     thread->state = WINGO_THREAD_STATE_RUNNING;
     thread->running = true;
     pthread_cond_broadcast(&thread->cond);
     pthread_mutex_unlock(&thread->mutex);
 
-    /* Call user function */
     if (thread->func != NULL) {
         thread->retval = thread->func(thread->arg);
     }
 
-    /* Mark as stopped */
     pthread_mutex_lock(&thread->mutex);
     thread->state = WINGO_THREAD_STATE_STOPPED;
     thread->running = false;
@@ -218,7 +172,6 @@ wingo_thread_t *wingo_thread_new(wingo_thread_func_t func,
     thread->running = false;
     thread->id = 0;
 
-    /* Copy name */
     if (name != NULL) {
         strncpy(thread->name, name, sizeof(thread->name) - 1);
         thread->name[sizeof(thread->name) - 1] = '\0';
@@ -226,7 +179,6 @@ wingo_thread_t *wingo_thread_new(wingo_thread_func_t func,
         thread->name[0] = '\0';
     }
 
-    /* Initialize synchronization */
     if (pthread_mutex_init(&thread->mutex, NULL) != 0) {
         free(thread);
         return NULL;
@@ -342,7 +294,6 @@ void wingo_thread_free(wingo_thread_t *thread)
         return;
     }
 
-    /* Wait for thread to finish if still running */
     if (thread->handle_valid) {
         pthread_join(thread->handle, NULL);
     }
@@ -431,19 +382,12 @@ void wingo_thread_yield(void)
  * THREAD POOL — WORKER
  * ============================================================================ */
 
-/*
- * Worker thread function.
- *
- * Loops forever, pulling tasks from the queue and executing them.
- * Exits when stop is requested and queue is empty.
- */
 static void *pool_worker_func(void *arg)
 {
     pool_worker_t *worker = (pool_worker_t *)arg;
     wingo_thread_pool_t *pool = worker->pool;
     char name[THREAD_NAME_MAX];
 
-    /* Set thread name */
     snprintf(name, sizeof(name), "bowie-%d", worker->index);
     set_thread_name(name);
 
@@ -456,37 +400,31 @@ static void *pool_worker_func(void *arg)
 
         pthread_mutex_lock(&pool->mutex);
 
-        /* Wait for tasks or stop */
         while (pool->queue_count == 0 && !pool->stop_requested) {
             pthread_cond_wait(&pool->cond_not_empty, &pool->mutex);
         }
 
-        /* Check stop condition */
         if (pool->stop_requested && pool->queue_count == 0) {
             pthread_mutex_unlock(&pool->mutex);
             break;
         }
 
-        /* Dequeue a task */
         task = (wingo_task_t *)wingo_queue_pop(pool->tasks);
         if (task != NULL) {
             pool->queue_count--;
             pool->stat_pending--;
             pool->stat_active++;
 
-            /* Signal not_full (space available) */
             pthread_cond_signal(&pool->cond_not_full);
         }
 
         pthread_mutex_unlock(&pool->mutex);
 
-        /* Execute task (outside lock) */
         if (task != NULL) {
             if (task->func != NULL) {
                 task->func(task->arg);
             }
 
-            /* Cleanup */
             if (task->free_arg != NULL && task->arg != NULL) {
                 task->free_arg(task->arg);
             }
@@ -496,7 +434,6 @@ static void *pool_worker_func(void *arg)
             pool->stat_active--;
             pool->stat_total++;
 
-            /* Signal idle if queue is empty */
             if (pool->queue_count == 0 && pool->stat_active == 0) {
                 pthread_cond_broadcast(&pool->cond_idle);
             }
@@ -536,7 +473,6 @@ wingo_thread_pool_t *wingo_thread_pool_new(int num_threads, wingo_size queue_siz
     pool->stat_active = 0;
     pool->stat_pending = 0;
 
-    /* Initialize synchronization */
     if (pthread_mutex_init(&pool->mutex, NULL) != 0) {
         free(pool);
         return NULL;
@@ -563,7 +499,6 @@ wingo_thread_pool_t *wingo_thread_pool_new(int num_threads, wingo_size queue_siz
         return NULL;
     }
 
-    /* Create task queue */
     pool->tasks = wingo_queue_new(NULL);
     if (pool->tasks == NULL) {
         pthread_cond_destroy(&pool->cond_idle);
@@ -574,7 +509,6 @@ wingo_thread_pool_t *wingo_thread_pool_new(int num_threads, wingo_size queue_siz
         return NULL;
     }
 
-    /* Create worker array */
     pool->workers = calloc(num_threads, sizeof(pool_worker_t));
     if (pool->workers == NULL) {
         wingo_queue_free(pool->tasks);
@@ -595,12 +529,10 @@ void wingo_thread_pool_free(wingo_thread_pool_t *pool)
         return;
     }
 
-    /* Stop if running */
     if (pool->running) {
         wingo_thread_pool_stop(pool);
     }
 
-    /* Free pending tasks */
     if (pool->tasks != NULL) {
         wingo_task_t *task;
         while ((task = (wingo_task_t *)wingo_queue_pop(pool->tasks)) != NULL) {
@@ -612,10 +544,8 @@ void wingo_thread_pool_free(wingo_thread_pool_t *pool)
         wingo_queue_free(pool->tasks);
     }
 
-    /* Free workers */
     free(pool->workers);
 
-    /* Destroy synchronization */
     pthread_cond_destroy(&pool->cond_idle);
     pthread_cond_destroy(&pool->cond_not_full);
     pthread_cond_destroy(&pool->cond_not_empty);
@@ -641,7 +571,6 @@ wingo_error_t wingo_thread_pool_start(wingo_thread_pool_t *pool)
     pool->stop_requested = false;
     pthread_mutex_unlock(&pool->mutex);
 
-    /* Create worker threads */
     for (i = 0; i < pool->num_workers; i++) {
         pool->workers[i].pool = pool;
         pool->workers[i].index = i;
@@ -649,13 +578,11 @@ wingo_error_t wingo_thread_pool_start(wingo_thread_pool_t *pool)
         rc = pthread_create(&pool->workers[i].handle, NULL,
                             pool_worker_func, &pool->workers[i]);
         if (rc != 0) {
-            /* Failed — stop already-created workers */
             pthread_mutex_lock(&pool->mutex);
             pool->stop_requested = true;
             pthread_cond_broadcast(&pool->cond_not_empty);
             pthread_mutex_unlock(&pool->mutex);
 
-            /* Wait for already-created workers */
             for (int j = 0; j < i; j++) {
                 pthread_join(pool->workers[j].handle, NULL);
             }
@@ -685,13 +612,11 @@ wingo_error_t wingo_thread_pool_stop(wingo_thread_pool_t *pool)
 
     WINGO_LOG_INFO("Thread pool stopping...");
 
-    /* Signal stop */
     pthread_mutex_lock(&pool->mutex);
     pool->stop_requested = true;
     pthread_cond_broadcast(&pool->cond_not_empty);
     pthread_mutex_unlock(&pool->mutex);
 
-    /* Wait for all workers to finish */
     for (i = 0; i < pool->num_workers; i++) {
         pthread_join(pool->workers[i].handle, NULL);
     }
@@ -719,7 +644,6 @@ wingo_error_t wingo_thread_pool_submit(wingo_thread_pool_t *pool,
         return WINGO_ERR_INVALID_STATE;
     }
 
-    /* Allocate task */
     task = calloc(1, sizeof(wingo_task_t));
     if (task == NULL) {
         return WINGO_ERR_NOMEM;
@@ -731,7 +655,6 @@ wingo_error_t wingo_thread_pool_submit(wingo_thread_pool_t *pool,
 
     pthread_mutex_lock(&pool->mutex);
 
-    /* Wait if queue is full */
     while (pool->queue_size > 0 &&
            pool->queue_count >= pool->queue_size &&
            !pool->stop_requested) {
@@ -744,7 +667,6 @@ wingo_error_t wingo_thread_pool_submit(wingo_thread_pool_t *pool,
         return WINGO_ERR_CANCELED;
     }
 
-    /* Enqueue task */
     if (wingo_queue_push(pool->tasks, task) != WINGO_SUCCESS) {
         pthread_mutex_unlock(&pool->mutex);
         free(task);
@@ -754,7 +676,6 @@ wingo_error_t wingo_thread_pool_submit(wingo_thread_pool_t *pool,
     pool->queue_count++;
     pool->stat_pending++;
 
-    /* Signal not_empty */
     pthread_cond_signal(&pool->cond_not_empty);
 
     pthread_mutex_unlock(&pool->mutex);
@@ -988,10 +909,8 @@ wingo_error_t wingo_cond_timedwait(wingo_cond_t *cond, wingo_mutex_t *mutex,
         return WINGO_ERR_INVALID_ARG;
     }
 
-    /* Get current time */
     clock_gettime(CLOCK_REALTIME, &ts);
 
-    /* Add timeout */
     now_ms = (wingo_i64)ts.tv_sec * 1000 + (wingo_i64)ts.tv_nsec / 1000000;
     now_ms += timeout_ms;
 
@@ -1040,15 +959,26 @@ wingo_error_t wingo_cond_broadcast(wingo_cond_t *cond)
  * ONCE
  * ============================================================================ */
 
-static pthread_once_t once_result;
-static int once_status;
+/*
+ * Once control.
+ *
+ * Ensures a function is called exactly once.
+ *
+ * NOTE: pthread_once() cannot pass arguments to the init function,
+ * so we implement our own once mechanism using a mutex + flag.
+ *
+ * Usage:
+ *   static wingo_once_t once = WINGO_ONCE_INIT;
+ *   wingo_once(&once, my_init_function);
+ */
 
-static void once_helper(void (*func)(void))
-{
-    if (func != NULL) {
-        func();
-    }
-}
+/*
+ * Global mutex for all once operations.
+ *
+ * This is a simplification — in a real implementation with many
+ * once variables, we'd want per-once mutexes or a lock-free approach.
+ */
+static pthread_mutex_t once_global_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 wingo_error_t wingo_once(wingo_once_t *once, void (*func)(void))
 {
@@ -1056,21 +986,35 @@ wingo_error_t wingo_once(wingo_once_t *once, void (*func)(void))
         return WINGO_ERR_INVALID_ARG;
     }
 
-    WINGO_UNUSED(once_result);
-    WINGO_UNUSED(once_status);
+    /*
+     * Fast path: already done.
+     *
+     * We use the pthread_once_t value directly as our flag.
+     * PTHREAD_ONCE_INIT is 0, so any non-zero value means done.
+     *
+     * We use atomic load to avoid a memory barrier on the fast path.
+     */
+    if (__atomic_load_n((int *)once, __ATOMIC_ACQUIRE) != 0) {
+        return WINGO_SUCCESS;
+    }
 
     /*
-     * pthread_once() takes a function with no arguments,
-     * but we need to pass func. We use a global workaround.
+     * Slow path: not done yet.
      *
-     * For a proper implementation, we'd need to pass the function
-     * through a struct. For now, this works for simple cases.
+     * Lock the global mutex, then double-check.
      */
+    pthread_mutex_lock(&once_global_mutex);
 
-    /* Store func in a static (not thread-safe for multiple once) */
-    /* In a real implementation, use a proper mechanism */
+    /* Double-check: someone else may have done it while we waited */
+    if (__atomic_load_n((int *)once, __ATOMIC_ACQUIRE) == 0) {
+        /* Call the function */
+        func();
 
-    pthread_once((pthread_once_t *)once, once_helper);
+        /* Mark as done */
+        __atomic_store_n((int *)once, 1, __ATOMIC_RELEASE);
+    }
+
+    pthread_mutex_unlock(&once_global_mutex);
 
     return WINGO_SUCCESS;
 }
