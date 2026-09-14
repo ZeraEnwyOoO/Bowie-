@@ -1,4 +1,4 @@
-/*
+ /*
  * Wingo — P2P Internet Sharing Tool (Repo: Bowie)
  * Copyright (C) 2024 ASBM Team
  *
@@ -24,18 +24,20 @@
  * LINUX PLATFORM API
  * ============================================================================
  *
- * This header provides Linux-specific APIs that are not part of the
- * cross-platform abstraction. These functions are used internally by
- * the Linux platform implementation.
+ * This header provides Linux-specific APIs.
  *
- * Features:
- *   - TUN/TAP interface management
+ * It includes:
+ *   - TUN interface management
  *   - Interface configuration (IP, MTU, MAC)
- *   - Routing table
- *   - iptables/nftables (NAT, FORWARD)
+ *   - Routing
+ *   - IP forwarding
+ *   - iptables (NAT, FORWARD)
  *   - PID file
  *   - Daemonization
  *   - Network information
+ *
+ * NOTE: This header only works on Linux.
+ *       It is included by platform.c and by main.c.
  *
  * ============================================================================
  */
@@ -46,21 +48,47 @@
 
 #if WINGO_PLATFORM_LINUX
 
+#include <net/if.h>
+#include <linux/if_tun.h>
+
 /* ============================================================================
- * TUN INTERFACE
+ * TUN INTERFACE STRUCTURE
  * ============================================================================ */
 
 /*
- * TUN flags.
+ * TUN interface (Linux-specific).
+ *
+ * This is the concrete layout of the opaque wingo_tun_t.
+ *
+ * It is defined here (instead of in platform.c) so that main.c
+ * and other files can access the fields directly.
  */
+struct wingo_tun {
+    int         fd;                     /* /dev/net/tun fd */
+    char        name[IFNAMSIZ];         /* Interface name */
+    int         mtu;                    /* MTU */
+    bool        configured;             /* IP configured? */
+    bool        persistent;             /* Persistent TUN? */
+};
 
-#define WINGO_TUN_FLAG_TUN      IFF_TUN      /* TUN (layer 3) */
-#define WINGO_TUN_FLAG_TAP      IFF_TAP      /* TAP (layer 2) */
-#define WINGO_TUN_FLAG_NO_PI    IFF_NO_PI    /* No packet info */
-#define WINGO_TUN_FLAG_MULTI   IFF_MULTI_QUEUE /* Multi-queue */
+/* ============================================================================
+ * TUN FLAGS
+ * ============================================================================ */
 
 /*
- * Open a TUN interface directly.
+ * TUN flags (from <linux/if_tun.h>).
+ */
+#define WINGO_TUN_FLAG_TUN      IFF_TUN
+#define WINGO_TUN_FLAG_TAP      IFF_TAP
+#define WINGO_TUN_FLAG_NO_PI    IFF_NO_PI
+#define WINGO_TUN_FLAG_MULTI    IFF_MULTI_QUEUE
+
+/* ============================================================================
+ * LOW-LEVEL TUN API
+ * ============================================================================ */
+
+/*
+ * Open a TUN interface directly with custom flags.
  *
  * This is the low-level function. Use wingo_tun_open() from platform.h
  * for the cross-platform API.
@@ -69,7 +97,6 @@
  * @param flags     TUN flags
  * @return          TUN handle, or NULL on error
  */
-
 wingo_tun_t *wingo_linux_tun_open(const char *name, int flags);
 
 /*
@@ -80,7 +107,6 @@ wingo_tun_t *wingo_linux_tun_open(const char *name, int flags);
  * @param tun       TUN handle
  * @return          WINGO_SUCCESS on success, error code on failure
  */
-
 wingo_error_t wingo_linux_tun_set_persistent(wingo_tun_t *tun);
 
 /* ============================================================================
@@ -95,7 +121,6 @@ wingo_error_t wingo_linux_tun_set_persistent(wingo_tun_t *tun);
  * @param netmask   Netmask (e.g., "255.255.255.0")
  * @return          WINGO_SUCCESS on success, error code on failure
  */
-
 wingo_error_t wingo_linux_if_set_ipv4(const char *ifname,
                                       const char *addr,
                                       const char *netmask);
@@ -107,18 +132,7 @@ wingo_error_t wingo_linux_if_set_ipv4(const char *ifname,
  * @param mtu       MTU value
  * @return          WINGO_SUCCESS on success, error code on failure
  */
-
 wingo_error_t wingo_linux_if_set_mtu(const char *ifname, int mtu);
-
-/*
- * Set interface MAC address.
- *
- * @param ifname    Interface name
- * @param mac       MAC address (e.g., "aa:bb:cc:dd:ee:ff")
- * @return          WINGO_SUCCESS on success, error code on failure
- */
-
-wingo_error_t wingo_linux_if_set_mac(const char *ifname, const char *mac);
 
 /*
  * Bring interface up.
@@ -126,7 +140,6 @@ wingo_error_t wingo_linux_if_set_mac(const char *ifname, const char *mac);
  * @param ifname    Interface name
  * @return          WINGO_SUCCESS on success, error code on failure
  */
-
 wingo_error_t wingo_linux_if_up(const char *ifname);
 
 /*
@@ -135,30 +148,11 @@ wingo_error_t wingo_linux_if_up(const char *ifname);
  * @param ifname    Interface name
  * @return          WINGO_SUCCESS on success, error code on failure
  */
-
 wingo_error_t wingo_linux_if_down(const char *ifname);
 
 /* ============================================================================
  * INTERFACE QUERY
  * ============================================================================ */
-
-/*
- * Get interface flags.
- *
- * @param ifname    Interface name
- * @return          Flags, or -1 on error
- */
-
-int wingo_linux_if_get_flags(const char *ifname);
-
-/*
- * Get interface MTU.
- *
- * @param ifname    Interface name
- * @return          MTU, or -1 on error
- */
-
-int wingo_linux_if_get_mtu(const char *ifname);
 
 /*
  * Get interface IP address.
@@ -168,7 +162,6 @@ int wingo_linux_if_get_mtu(const char *ifname);
  * @param size      Buffer size
  * @return          WINGO_SUCCESS on success, error code on failure
  */
-
 wingo_error_t wingo_linux_if_get_ipv4(const char *ifname,
                                       char *buf, wingo_size size);
 
@@ -180,7 +173,6 @@ wingo_error_t wingo_linux_if_get_ipv4(const char *ifname,
  * @param size      Buffer size
  * @return          WINGO_SUCCESS on success, error code on failure
  */
-
 wingo_error_t wingo_linux_if_get_mac(const char *ifname,
                                      char *buf, wingo_size size);
 
@@ -190,7 +182,6 @@ wingo_error_t wingo_linux_if_get_mac(const char *ifname,
  * @param ifname    Interface name
  * @return          true if exists, false otherwise
  */
-
 bool wingo_linux_if_exists(const char *ifname);
 
 /*
@@ -199,8 +190,180 @@ bool wingo_linux_if_exists(const char *ifname);
  * @param ifname    Interface name
  * @return          true if up, false otherwise
  */
-
 bool wingo_linux_if_is_up(const char *ifname);
+
+/* ============================================================================
+ * IP FORWARDING
+ * ============================================================================ */
+
+/*
+ * Enable IPv4 forwarding.
+ *
+ * @return          WINGO_SUCCESS on success, error code on failure
+ */
+wingo_error_t wingo_linux_enable_ip_forward(void);
+
+/*
+ * Disable IPv4 forwarding.
+ *
+ * @return          WINGO_SUCCESS on success, error code on failure
+ */
+wingo_error_t wingo_linux_disable_ip_forward(void);
+
+/*
+ * Check if IPv4 forwarding is enabled.
+ *
+ * @return          true if enabled, false otherwise
+ */
+bool wingo_linux_is_ip_forward_enabled(void);
+
+/* ============================================================================
+ * IPTABLES (NAT)
+ * ============================================================================ */
+
+/*
+ * Add MASQUERADE rule.
+ *
+ * @param out_if    Output interface
+ * @return          WINGO_SUCCESS on success, error code on failure
+ */
+wingo_error_t wingo_linux_add_masquerade(const char *out_if);
+
+/*
+ * Remove MASQUERADE rule.
+ *
+ * @param out_if    Output interface
+ * @return          WINGO_SUCCESS on success, error code on failure
+ */
+wingo_error_t wingo_linux_remove_masquerade(const char *out_if);
+
+/*
+ * Add FORWARD rules.
+ *
+ * @param in_if     Input interface
+ * @param out_if    Output interface
+ * @return          WINGO_SUCCESS on success, error code on failure
+ */
+wingo_error_t wingo_linux_add_forward_rules(const char *in_if,
+                                            const char *out_if);
+
+/*
+ * Remove FORWARD rules.
+ *
+ * @param in_if     Input interface
+ * @param out_if    Output interface
+ * @return          WINGO_SUCCESS on success, error code on failure
+ */
+wingo_error_t wingo_linux_remove_forward_rules(const char *in_if,
+                                               const char *out_if);
+
+/* ============================================================================
+ * PID FILE
+ * ============================================================================ */
+
+/*
+ * Write PID file.
+ *
+ * @param path      Path to PID file
+ * @return          WINGO_SUCCESS on success, error code on failure
+ */
+wingo_error_t wingo_linux_write_pidfile(const char *path);
+
+/*
+ * Remove PID file.
+ *
+ * @param path      Path to PID file
+ * @return          WINGO_SUCCESS on success, error code on failure
+ */
+wingo_error_t wingo_linux_remove_pidfile(const char *path);
+
+/*
+ * Read PID from file.
+ *
+ * @param path      Path to PID file
+ * @return          PID, or -1 on error
+ */
+wingo_i64 wingo_linux_read_pidfile(const char *path);
+
+/*
+ * Check if process is running.
+ *
+ * @param pid       Process ID
+ * @return          true if running, false otherwise
+ */
+bool wingo_linux_is_process_running(wingo_i64 pid);
+
+/* ============================================================================
+ * DAEMONIZATION
+ * ============================================================================ */
+
+/*
+ * Daemonize the process.
+ *
+ * @return          WINGO_SUCCESS on success, error code on failure
+ */
+wingo_error_t wingo_linux_daemonize(void);
+
+/* ============================================================================
+ * NETWORK INFORMATION
+ * ============================================================================ */
+
+/*
+ * Network interface information.
+ */
+typedef struct {
+    char    name[IFNAMSIZ];     /* Interface name */
+    char    ipv4[16];           /* IPv4 address */
+    char    ipv6[46];           /* IPv6 address */
+    char    mac[18];            /* MAC address */
+    int     mtu;                /* MTU */
+    int     flags;              /* Interface flags */
+    bool    is_up;              /* Is interface up? */
+    bool    is_loopback;        /* Is loopback? */
+} wingo_linux_if_info_t;
+
+/*
+ * List network interfaces.
+ *
+ * @param out       Output array
+ * @param max       Maximum number of interfaces
+ * @return          Number of interfaces written, or -1 on error
+ */
+int wingo_linux_list_interfaces(wingo_linux_if_info_t *out, int max);
+
+/*
+ * Get interface information.
+ *
+ * @param ifname    Interface name
+ * @param out       Output information
+ * @return          WINGO_SUCCESS on success, error code on failure
+ */
+wingo_error_t wingo_linux_get_interface_info(const char *ifname,
+                                             wingo_linux_if_info_t *out);
+
+/*
+ * Get hostname.
+ *
+ * @param buf       Output buffer
+ * @param size      Buffer size
+ * @return          WINGO_SUCCESS on success, error code on failure
+ */
+wingo_error_t wingo_linux_get_hostname(char *buf, wingo_size size);
+
+/*
+ * Get system uptime.
+ *
+ * @return          Uptime in seconds, or -1 on error
+ */
+wingo_i64 wingo_linux_get_uptime(void);
+
+/*
+ * Get system load average.
+ *
+ * @param load      Output array of 3 doubles
+ * @return          WINGO_SUCCESS on success, error code on failure
+ */
+wingo_error_t wingo_linux_get_loadavg(double load[3]);
 
 /* ============================================================================
  * ROUTING
@@ -215,7 +378,6 @@ bool wingo_linux_if_is_up(const char *ifname);
  * @param gateway   Gateway (NULL for direct route)
  * @return          WINGO_SUCCESS on success, error code on failure
  */
-
 wingo_error_t wingo_linux_route_add(const char *ifname,
                                     const char *dest,
                                     const char *netmask,
@@ -229,21 +391,9 @@ wingo_error_t wingo_linux_route_add(const char *ifname,
  * @param netmask   Netmask
  * @return          WINGO_SUCCESS on success, error code on failure
  */
-
 wingo_error_t wingo_linux_route_remove(const char *ifname,
                                        const char *dest,
                                        const char *netmask);
-
-/*
- * Set default route.
- *
- * @param ifname    Interface name
- * @param gateway   Gateway address
- * @return          WINGO_SUCCESS on success, error code on failure
- */
-
-wingo_error_t wingo_linux_route_set_default(const char *ifname,
-                                            const char *gateway);
 
 /*
  * Get default interface.
@@ -252,211 +402,7 @@ wingo_error_t wingo_linux_route_set_default(const char *ifname,
  * @param size      Buffer size
  * @return          WINGO_SUCCESS on success, error code on failure
  */
-
 wingo_error_t wingo_linux_route_get_default_if(char *buf, wingo_size size);
-
-/* ============================================================================
- * IP FORWARDING
- * ============================================================================ */
-
-/*
- * Enable IPv4 forwarding.
- *
- * @return          WINGO_SUCCESS on success, error code on failure
- */
-
-wingo_error_t wingo_linux_enable_ip_forward(void);
-
-/*
- * Disable IPv4 forwarding.
- *
- * @return          WINGO_SUCCESS on success, error code on failure
- */
-
-wingo_error_t wingo_linux_disable_ip_forward(void);
-
-/*
- * Check if IPv4 forwarding is enabled.
- *
- * @return          true if enabled, false otherwise
- */
-
-bool wingo_linux_is_ip_forward_enabled(void);
-
-/* ============================================================================
- * IPTABLES (NAT)
- * ============================================================================ */
-
-/*
- * Add MASQUERADE rule.
- *
- * @param out_if    Output interface
- * @return          WINGO_SUCCESS on success, error code on failure
- */
-
-wingo_error_t wingo_linux_add_masquerade(const char *out_if);
-
-/*
- * Remove MASQUERADE rule.
- *
- * @param out_if    Output interface
- * @return          WINGO_SUCCESS on success, error code on failure
- */
-
-wingo_error_t wingo_linux_remove_masquerade(const char *out_if);
-
-/*
- * Add FORWARD rules.
- *
- * @param in_if     Input interface
- * @param out_if    Output interface
- * @return          WINGO_SUCCESS on success, error code on failure
- */
-
-wingo_error_t wingo_linux_add_forward_rules(const char *in_if,
-                                            const char *out_if);
-
-/*
- * Remove FORWARD rules.
- *
- * @param in_if     Input interface
- * @param out_if    Output interface
- * @return          WINGO_SUCCESS on success, error code on failure
- */
-
-wingo_error_t wingo_linux_remove_forward_rules(const char *in_if,
-                                               const char *out_if);
-
-/*
- * Clear all iptables rules added by Bowie.
- *
- * @return          WINGO_SUCCESS on success, error code on failure
- */
-
-wingo_error_t wingo_linux_clear_iptables(void);
-
-/* ============================================================================
- * PID FILE
- * ============================================================================ */
-
-/*
- * Write PID file.
- *
- * @param path      Path to PID file
- * @return          WINGO_SUCCESS on success, error code on failure
- */
-
-wingo_error_t wingo_linux_write_pidfile(const char *path);
-
-/*
- * Remove PID file.
- *
- * @param path      Path to PID file
- * @return          WINGO_SUCCESS on success, error code on failure
- */
-
-wingo_error_t wingo_linux_remove_pidfile(const char *path);
-
-/*
- * Read PID from file.
- *
- * @param path      Path to PID file
- * @return          PID, or -1 on error
- */
-
-wingo_i64 wingo_linux_read_pidfile(const char *path);
-
-/*
- * Check if process is running.
- *
- * @param pid       Process ID
- * @return          true if running, false otherwise
- */
-
-bool wingo_linux_is_process_running(wingo_i64 pid);
-
-/* ============================================================================
- * DAEMONIZATION
- * ============================================================================ */
-
-/*
- * Daemonize the process.
- *
- * @return          WINGO_SUCCESS on success, error code on failure
- */
-
-wingo_error_t wingo_linux_daemonize(void);
-
-/* ============================================================================
- * NETWORK INFORMATION
- * ============================================================================ */
-
-/*
- * Network interface information.
- */
-
-typedef struct {
-    char    name[IFNAMSIZ];
-    char    ipv4[16];
-    char    ipv6[46];
-    char    mac[18];
-    int     mtu;
-    int     flags;
-    bool    is_up;
-    bool    is_loopback;
-} wingo_linux_if_info_t;
-
-/*
- * List network interfaces.
- *
- * @param out       Output array
- * @param max       Maximum number of interfaces
- * @return          Number of interfaces written, or -1 on error
- */
-
-int wingo_linux_list_interfaces(wingo_linux_if_info_t *out, int max);
-
-/*
- * Get interface information.
- *
- * @param ifname    Interface name
- * @param out       Output information
- * @return          WINGO_SUCCESS on success, error code on failure
- */
-
-wingo_error_t wingo_linux_get_interface_info(const char *ifname,
-                                             wingo_linux_if_info_t *out);
-
-/*
- * Get hostname.
- *
- * @param buf       Output buffer
- * @param size      Buffer size
- * @return          WINGO_SUCCESS on success, error code on failure
- */
-
-wingo_error_t wingo_linux_get_hostname(char *buf, wingo_size size);
-
-/*
- * Get system uptime.
- *
- * @return          Uptime in seconds, or -1 on error
- */
-
-wingo_i64 wingo_linux_get_uptime(void);
-
-/*
- * Get system load average.
- *
- * @param load      Output array of 3 doubles
- * @return          WINGO_SUCCESS on success, error code on failure
- */
-
-wingo_error_t wingo_linux_get_loadavg(double load[3]);
-
-/* ============================================================================
- * END OF HEADER
- * ============================================================================ */
 
 #endif /* WINGO_PLATFORM_LINUX */
 
