@@ -1,1 +1,243 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Wingo — P2P Internet Sharing Tool (Repo: Bowie)
+  Copyright (C) 2024 ASBM Team
 
+  This program is free software: you can redistribute it and/or modify
+  it under the terms of the GNU General Public License as published by
+  the Free Software Foundation, either version 3 of the License, or
+  (at your option) any later version.
+
+  This program is distributed in the hope that it will be useful,
+  but WITHOUT ANY WARRANTY; without even the implied warranty of
+  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+  GNU General Public License for more details.
+
+  You should have received a copy of the GNU General Public License
+  along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+  ============================================================================
+  THEMES
+  ============================================================================
+
+  This file defines all themes used by Bowie.
+
+  Themes are styles that apply to the entire Activity.
+
+  ============================================================================
+-->
+<resources>
+
+    <!-- ====================================================================
+         TERMINAL THEME
+         ==================================================================== -->
+
+    <!--
+      TerminalTheme — main theme for MainActivity.
+
+      This is a black theme with no title bar, used for the terminal UI.
+
+      Parent: Theme.Black.NoTitleBar
+        - Black background
+        - No title bar (full screen)
+    -->
+    <style name="TerminalTheme" parent="@android:style/Theme.Black.NoTitleBar">
+
+        <!-- Window background — black -->
+        <item name="android:windowBackground">@color/terminal_background</item>
+
+        <!-- Text color — green -->
+        <item name="android:textColor">@color/terminal_foreground</item>
+
+        <!-- Background color — black -->
+        <item name="android:colorBackground">@color/terminal_background</item>
+
+        <!-- Foreground color — green -->
+        <item name="android:colorForeground">@color/terminal_foreground</item>
+
+        <!-- Status bar — black -->
+        <item name="android:statusBarColor">@color/black</item>
+
+        <!-- Navigation bar — black -->
+        <item name="android:navigationBarColor">@color/black</item>
+
+        <!-- Window light status bar — false (dark theme) -->
+        <item name="android:windowLightStatusBar">false</item>
+
+        <!-- Window light navigation bar — false (dark theme) -->
+        <item name="android:windowLightNavigationBar">false</item>
+
+    </style>
+
+    <!-- ====================================================================
+         DIALOG THEME
+         ==================================================================== -->
+
+    <!--
+      TerminalDialogTheme — theme for dialogs.
+
+      This is a dark theme for dialogs.
+    -->
+    <style name="TerminalDialogTheme"
+        parent="@android:style/Theme.Material.Dialog.Alert">
+
+        <!-- Background — dark gray -->
+        <item name="android:colorBackground">@color/input_background</item>
+
+        <!-- Text color — green -->
+        <item name="android:textColor">@color/terminal_foreground</item>
+
+        <!-- Accent color — green -->
+        <item name="android:colorAccent">@color/colorAccent</item>
+
+    </style>
+
+    <!-- ====================================================================
+         BUTTON STYLES
+         ==================================================================== -->
+
+    <!--
+      TerminalButton — base button style.
+
+      Used for all buttons in the terminal UI.
+    -->
+    <style name="TerminalButton"
+        parent="@android:style/Widget.Material.Button">
+
+        <!-- Text color — green -->
+        <item name="android:textColor">@color/terminal_foreground</item>
+
+        <!-- Background — dark gray -->
+        <item name="android:background">@color/input_background</item>
+
+        <!-- Text size — 14sp -->
+        <item name="android:textSize">14sp</item>
+
+        <!-- Monospace font -->
+        <item name="android:fontFamily">monospace</item>
+
+        <!-- Padding -->
+        <item name="android:padding">12dp</item>
+
+    </style>
+
+    <!--
+      TerminalButtonStart — start button style.
+
+      Green button for starting VPN.
+    -->
+    <style name="TerminalButtonStart" parent="TerminalButton">
+
+        <!-- Text color — white -->
+        <item name="android:textColor">@color/white</item>
+
+        <!-- Background — green -->
+        <item name="android:background">@color/button_start</item>
+
+    </style>
+
+    <!--
+      TerminalButtonStop — stop button style.
+
+      Red button for stopping VPN.
+    -->
+    <style name="TerminalButtonStop" parent="TerminalButton">
+
+        <!-- Text color — white -->
+        <item name="android:textColor">@color/white</item>
+
+        <!-- Background — red -->
+        <item name="android:background">@color/button_stop</item>
+
+    </style>
+
+    <!--
+      TerminalButtonSend — send button style.
+
+      Blue button for sending commands.
+    -->
+    <style name="TerminalButtonSend" parent="TerminalButton">
+
+        <!-- Text color — white -->
+        <item name="android:textColor">@color/white</item>
+
+        <!-- Background — blue -->
+        <item name="android:background">@color/button_send</item>
+
+    </style>
+
+    <!-- ====================================================================
+         TEXT STYLES
+         ==================================================================== -->
+
+    <!--
+      TerminalText — base text style.
+
+      Monospace text for terminal output.
+    -->
+    <style name="TerminalText">
+
+        <!-- Text color — green -->
+        <item name="android:textColor">@color/terminal_foreground</item>
+
+        <!-- Text size — 12sp -->
+        <item name="android:textSize">12sp</item>
+
+        <!-- Monospace font -->
+        <item name="android:fontFamily">monospace</item>
+
+    </style>
+
+    <!--
+      TerminalTextTitle — title text style.
+
+      Larger monospace text for the title.
+    -->
+    <style name="TerminalTextTitle" parent="TerminalText">
+
+        <!-- Text size — 18sp -->
+        <item name="android:textSize">18sp</item>
+
+        <!-- Bold -->
+        <item name="android:textStyle">bold</item>
+
+        <!-- Padding -->
+        <item name="android:paddingBottom">16dp</item>
+
+    </style>
+
+    <!-- ====================================================================
+         INPUT STYLES
+         ==================================================================== -->
+
+    <!--
+      TerminalInput — input field style.
+
+      Monospace input for terminal commands.
+    -->
+    <style name="TerminalInput">
+
+        <!-- Text color — green -->
+        <item name="android:textColor">@color/input_text</item>
+
+        <!-- Hint color — gray -->
+        <item name="android:textColorHint">@color/input_hint</item>
+
+        <!-- Cursor color — green -->
+        <item name="android:textCursorDrawable">@null</item>
+
+        <!-- Background — dark gray -->
+        <item name="android:background">@color/input_background</item>
+
+        <!-- Text size — 14sp -->
+        <item name="android:textSize">14sp</item>
+
+        <!-- Monospace font -->
+        <item name="android:fontFamily">monospace</item>
+
+        <!-- Padding -->
+        <item name="android:padding">8dp</item>
+
+    </style>
+
+</resources>
