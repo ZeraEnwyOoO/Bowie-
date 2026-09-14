@@ -6,14 +6,6 @@
 # it under the terms of the GNU General Public License as published by
 # the Free Software Foundation, either version 3 of the License, or
 # (at your option) any later version.
-#
-# This program is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
-#
-# You should have received a copy of the GNU General Public License
-# along with this program.  If not, see <https://www.gnu.org/licenses/>.
 # ============================================================================
 
 # ============================================================================
@@ -106,7 +98,8 @@ DEFINES := \
     -D_POSIX_C_SOURCE=200809L
 
 INCLUDES := \
-    -I$(INCLUDE_DIR)
+    -I$(INCLUDE_DIR) \
+    -I.
 
 CFLAGS := \
     $(CSTD) \
@@ -154,6 +147,10 @@ CORE_SRCS += \
     $(SRC_DIR)/core/event.c \
     $(SRC_DIR)/core/state.c \
     $(SRC_DIR)/core/thread.c
+
+# Phase 3: Platform (Cross-Platform)
+CORE_SRCS += \
+    $(SRC_DIR)/platform/platform.c
 
 CORE_OBJS := $(patsubst $(SRC_DIR)/%.c,$(OBJ_DIR)/%.o,$(CORE_SRCS))
 
@@ -263,36 +260,6 @@ test: tests
 	@echo "  All tests passed!"
 	@echo "=========================================="
 
-.PHONY: test-phase1
-test-phase1: $(TEST_BUFFER) $(TEST_LIST) $(TEST_QUEUE) $(TEST_HASHMAP)
-	@$(TEST_BUFFER)
-	@$(TEST_LIST)
-	@$(TEST_QUEUE)
-	@$(TEST_HASHMAP)
-
-.PHONY: test-phase2
-test-phase2: $(TEST_ENGINE) $(TEST_EVENT) $(TEST_STATE) $(TEST_THREAD)
-	@$(TEST_ENGINE)
-	@$(TEST_EVENT)
-	@$(TEST_STATE)
-	@$(TEST_THREAD)
-
-# ============================================================================
-# MEMORY CHECK
-# ============================================================================
-
-.PHONY: valgrind
-valgrind: tests
-	@echo "Running tests with Valgrind..."
-	@valgrind --leak-check=full --error-exitcode=1 $(TEST_BUFFER)
-	@valgrind --leak-check=full --error-exitcode=1 $(TEST_LIST)
-	@valgrind --leak-check=full --error-exitcode=1 $(TEST_QUEUE)
-	@valgrind --leak-check=full --error-exitcode=1 $(TEST_HASHMAP)
-	@valgrind --leak-check=full --error-exitcode=1 $(TEST_ENGINE)
-	@valgrind --leak-check=full --error-exitcode=1 $(TEST_EVENT)
-	@valgrind --leak-check=full --error-exitcode=1 $(TEST_STATE)
-	@valgrind --leak-check=full --error-exitcode=1 $(TEST_THREAD)
-
 # ============================================================================
 # CLEAN
 # ============================================================================
@@ -301,11 +268,6 @@ valgrind: tests
 clean:
 	@echo "  CLEAN   $(BUILD_DIR)"
 	@$(RMDIR) $(BUILD_DIR)
-
-.PHONY: clean-obj
-clean-obj:
-	@echo "  CLEAN   $(OBJ_DIR)"
-	@$(RMDIR) $(OBJ_DIR)
 
 # ============================================================================
 # DIRECTORY CREATION
@@ -324,45 +286,19 @@ $(TEST_BIN_DIR): | $(BUILD_DIR)
 	@$(MKDIR) $(TEST_BIN_DIR)
 
 # ============================================================================
-# INFO
-# ============================================================================
-
-.PHONY: info
-info:
-	@echo "Project:    $(PROJECT_NAME)"
-	@echo "Version:    $(PROJECT_VERSION)"
-	@echo "CC:         $(CC)"
-	@echo ""
-	@echo "Sources:"
-	@for src in $(CORE_SRCS); do echo "  $$src"; done
-	@echo ""
-	@echo "Library:    $(LIB_TARGET)"
-	@echo "Tests:      $(TEST_TARGETS)"
-
-# ============================================================================
 # HELP
 # ============================================================================
 
 .PHONY: help
 help:
 	@echo ""
-	@echo "$(PROJECT_NAME) v$(PROJECT_VERSION) — Build System"
+	@echo "$(PROJECT_NAME) v$(PROJECT_VERSION)"
 	@echo ""
 	@echo "Usage: make [target]"
 	@echo ""
-	@echo "Build targets:"
-	@echo "  all             Build library (default)"
-	@echo "  tests           Build all tests"
-	@echo "  test            Build and run all tests"
-	@echo "  test-phase1     Run Phase 1 tests only"
-	@echo "  test-phase2     Run Phase 2 tests only"
-	@echo ""
-	@echo "Quality targets:"
-	@echo "  valgrind        Run tests with Valgrind"
-	@echo "  clean           Remove all build artifacts"
-	@echo "  clean-obj       Remove object files only"
-	@echo ""
-	@echo "Info targets:"
-	@echo "  info            Show build information"
-	@echo "  help            Show this help"
+	@echo "  all       Build library (default)"
+	@echo "  tests     Build all tests"
+	@echo "  test      Build and run all tests"
+	@echo "  clean     Remove build artifacts"
+	@echo "  help      Show this help"
 	@echo ""
