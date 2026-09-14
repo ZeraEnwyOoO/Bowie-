@@ -1,4 +1,4 @@
-/*
+ /*
  * Wingo — P2P Internet Sharing Tool (Repo: Bowie)
  * Copyright (C) 2024 ASBM Team
  *
@@ -52,7 +52,7 @@
  *
  * ============================================================================
  */
-
+//why diagram? bcus i fix that shit a lot of hour
 #include "wingo/common.h"
 #include "wingo/error.h"
 #include "wingo/log.h"
@@ -63,16 +63,19 @@
 
 /*
  * Platform detection at compile time.
+ *
+ * NOTE: We use WINGO_IS_LINUX / WINGO_IS_ANDROID as macros
+ *       to avoid conflict with the enum values below.
  */
 
 #if defined(__ANDROID__)
-    #define WINGO_PLATFORM_ANDROID   1
-    #define WINGO_PLATFORM_LINUX     0
-    #define WINGO_PLATFORM_NAME      "Android"
+    #define WINGO_IS_ANDROID    1
+    #define WINGO_IS_LINUX      0
+    #define WINGO_PLATFORM_NAME "Android"
 #elif defined(__linux__)
-    #define WINGO_PLATFORM_ANDROID   0
-    #define WINGO_PLATFORM_LINUX     1
-    #define WINGO_PLATFORM_NAME      "Linux"
+    #define WINGO_IS_ANDROID    0
+    #define WINGO_IS_LINUX      1
+    #define WINGO_PLATFORM_NAME "Linux"
 #else
     #error "Unsupported platform. Bowie requires Linux or Android."
 #endif
@@ -202,14 +205,16 @@ int wingo_tun_get_mtu(const wingo_tun_t *tun);
  * ANDROID-SPECIFIC API
  * ============================================================================ */
 
-#if WINGO_PLATFORM_ANDROID
+#if WINGO_IS_ANDROID
 
 /*
  * Set the TUN file descriptor from Android VpnService.
+ *
+ * Called from JNI after VpnService.establish().
  */
 wingo_error_t wingo_tun_set_android_fd(int fd);
 
-#endif /* WINGO_PLATFORM_ANDROID */
+#endif /* WINGO_IS_ANDROID */
 
 /* ============================================================================
  * PLATFORM INITIALIZATION
