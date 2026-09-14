@@ -1,1 +1,239 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Wingo — P2P Internet Sharing Tool (Repo: Bowie)
+  Copyright (C) 2024 ASBM Team
 
+  This program is free software: you can redistribute it and/or modify
+  it under the terms of the GNU General Public License as published by
+  the Free Software Foundation, either version 3 of the License, or
+  (at your option) any later version.
+
+  This program is distributed in the hope that it will be useful,
+  but WITHOUT ANY WARRANTY; without even the implied warranty of
+  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+  GNU General Public License for more details.
+
+  You should have received a copy of the GNU General Public License
+  along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+  ============================================================================
+  COLORS
+  ============================================================================
+
+  This file defines all colors used by Bowie.
+
+  Color format: #AARRGGBB
+    AA = Alpha (00 = transparent, FF = opaque)
+    RR = Red
+    GG = Green
+    BB = Blue
+
+  ============================================================================
+-->
+<resources>
+
+    <!-- ====================================================================
+         TERMINAL COLORS
+         ==================================================================== -->
+
+    <!--
+      Background color — black
+      Used for: Terminal background, window background
+    -->
+    <color name="terminal_background">#FF000000</color>
+
+    <!--
+      Foreground color — green
+      Used for: Terminal text
+    -->
+    <color name="terminal_foreground">#FF00FF00</color>
+
+    <!--
+      Accent color — darker green
+      Used for: Highlights, borders
+    -->
+    <color name="terminal_accent">#FF00AA00</color>
+
+    <!--
+      Error color — red
+      Used for: Error messages
+    -->
+    <color name="terminal_error">#FFFF0000</color>
+
+    <!--
+      Warning color — yellow
+      Used for: Warning messages
+    -->
+    <color name="terminal_warning">#FFFFFF00</color>
+
+    <!--
+      Info color — cyan
+      Used for: Info messages
+    -->
+    <color name="terminal_info">#FF00FFFF</color>
+
+    <!--
+      Debug color — gray
+      Used for: Debug messages
+    -->
+    <color name="terminal_debug">#FF888888</color>
+
+    <!--
+      Hint color — gray
+      Used for: Input hint text
+    -->
+    <color name="terminal_hint">#FF888888</color>
+
+    <!-- ====================================================================
+         APP COLORS
+         ==================================================================== -->
+
+    <!--
+      Primary color — black
+      Used for: Status bar, action bar
+    -->
+    <color name="colorPrimary">#FF000000</color>
+
+    <!--
+      Primary dark color — darker black
+      Used for: Status bar (dark)
+    -->
+    <color name="colorPrimaryDark">#FF000000</color>
+
+    <!--
+      Accent color — green
+      Used for: Buttons, highlights
+    -->
+    <color name="colorAccent">#FF00FF00</color>
+
+    <!--
+      Window background — black
+      Used for: App background
+    -->
+    <color name="colorBackground">#FF000000</color>
+
+    <!-- ====================================================================
+         BASIC COLORS
+         ==================================================================== -->
+
+    <!-- Black -->
+    <color name="black">#FF000000</color>
+
+    <!-- White -->
+    <color name="white">#FFFFFFFF</color>
+
+    <!-- Transparent -->
+    <color name="transparent">#00000000</color>
+
+    <!-- ====================================================================
+         STATUS COLORS
+         ==================================================================== -->
+
+    <!--
+      Status: Running — green
+    -->
+    <color name="status_running">#FF00FF00</color>
+
+    <!--
+      Status: Stopped — red
+    -->
+    <color name="status_stopped">#FFFF0000</color>
+
+    <!--
+      Status: Starting — yellow
+    -->
+    <color name="status_starting">#FFFFFF00</color>
+
+    <!--
+      Status: Connected — green
+    -->
+    <color name="status_connected">#FF00FF00</color>
+
+    <!--
+      Status: Disconnected — red
+    -->
+    <color name="status_disconnected">#FFFF0000</color>
+
+    <!-- ====================================================================
+         BUTTON COLORS
+         ==================================================================== -->
+
+    <!--
+      Button: Start — green
+    -->
+    <color name="button_start">#FF00AA00</color>
+
+    <!--
+      Button: Start (pressed) — darker green
+    -->
+    <color name="button_start_pressed">#FF007700</color>
+
+    <!--
+      Button: Start (disabled) — gray
+    -->
+    <color name="button_start_disabled">#FF444444</color>
+
+    <!--
+      Button: Stop — red
+    -->
+    <color name="button_stop">#FFAA0000</color>
+
+    <!--
+      Button: Stop (pressed) — darker red
+    -->
+    <color name="button_stop_pressed">#FF770000</color>
+
+    <!--
+      Button: Stop (disabled) — gray
+    -->
+    <color name="button_stop_disabled">#FF444444</color>
+
+    <!--
+      Button: Send — blue
+    -->
+    <color name="button_send">#FF0000AA</color>
+
+    <!--
+      Button: Send (pressed) — darker blue
+    -->
+    <color name="button_send_pressed">#FF000077</color>
+
+    <!-- ====================================================================
+         INPUT COLORS
+         ==================================================================== -->
+
+    <!--
+      Input background — dark gray
+    -->
+    <color name="input_background">#FF1A1A1A</color>
+
+    <!--
+      Input text — green
+    -->
+    <color name="input_text">#FF00FF00</color>
+
+    <!--
+      Input hint — gray
+    -->
+    <color name="input_hint">#FF888888</color>
+
+    <!--
+      Input cursor — green
+    -->
+    <color name="input_cursor">#FF00FF00</color>
+
+    <!-- ====================================================================
+         NOTIFICATION COLORS
+         ==================================================================== -->
+
+    <!--
+      Notification: Running — green
+    -->
+    <color name="notification_running">#FF00FF00</color>
+
+    <!--
+      Notification: Stopped — red
+    -->
+    <color name="notification_stopped">#FFFF0000</color>
+
+</resources>
