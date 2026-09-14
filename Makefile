@@ -108,6 +108,7 @@ DEFINES := \
 
 INCLUDES := \
     -I$(INCLUDE_DIR) \
+    -I$(PLATFORM_DIR) \
     -I.
 
 CFLAGS := \
