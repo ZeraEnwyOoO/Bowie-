@@ -1,1 +1,183 @@
+/*
+ * Wingo — P2P Internet Sharing Tool (Repo: Bowie)
+ * Copyright (C) 2024 ASBM Team
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
 
+/*
+ * App build.gradle
+ *
+ * This configures the Android application module.
+ */
+
+// ============================================================================
+// PLUGINS
+// ============================================================================
+
+plugins {
+    id 'com.android.application'
+    // NOTE: No Kotlin plugin — we use Java only
+}
+
+// ============================================================================
+// ANDROID CONFIGURATION
+// ============================================================================
+
+android {
+
+    // ------------------------------------------------------------------------
+    // SDK VERSIONS
+    // ------------------------------------------------------------------------
+
+    namespace 'com.bowie'
+    compileSdk 34
+    buildToolsVersion "34.0.0"
+
+    ndkVersion "25.1.8937393"
+
+    // ------------------------------------------------------------------------
+    // DEFAULT CONFIG
+    // ------------------------------------------------------------------------
+
+    defaultConfig {
+        applicationId "com.bowie"
+        minSdk 24
+        targetSdk 34
+        versionCode 1
+        versionName "0.1.0"
+
+        // Native build
+        externalNativeBuild {
+            cmake {
+                cppFlags "-std=c11"
+                arguments "-DANDROID_STL=none"
+            }
+        }
+
+        // NDK ABIs
+        ndk {
+            abiFilters 'arm64-v8a', 'armeabi-v7a', 'x86_64'
+        }
+    }
+
+    // ------------------------------------------------------------------------
+    // BUILD TYPES
+    // ------------------------------------------------------------------------
+
+    buildTypes {
+
+        // Debug build
+        debug {
+            minifyEnabled false
+            debuggable true
+
+            externalNativeBuild {
+                cmake {
+                    cppFlags "-std=c11 -DDEBUG -O0 -g"
+                }
+            }
+        }
+
+        // Release build
+        release {
+            minifyEnabled false
+            debuggable false
+
+            externalNativeBuild {
+                cmake {
+                    cppFlags "-std=c11 -DNDEBUG -O2"
+                }
+            }
+
+            // No proguard for now
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'),
+                          'proguard-rules.pro'
+        }
+    }
+
+    // ------------------------------------------------------------------------
+    // EXTERNAL NATIVE BUILD
+    // ------------------------------------------------------------------------
+
+    externalNativeBuild {
+        cmake {
+            path "src/main/cpp/CMakeLists.txt"
+            version "3.22.1"
+        }
+    }
+
+    // ------------------------------------------------------------------------
+    // COMPILE OPTIONS
+    // ------------------------------------------------------------------------
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_11
+        targetCompatibility JavaVersion.VERSION_11
+    }
+
+    // ------------------------------------------------------------------------
+    // PACKAGING
+    // ------------------------------------------------------------------------
+
+    packagingOptions {
+        // Include native libraries
+        jniLibs {
+            useLegacyPackaging = false
+        }
+
+        // Exclude unnecessary files
+        resources {
+            excludes += [
+                'META-INF/DEPENDENCIES',
+                'META-INF/LICENSE',
+                'META-INF/LICENSE.txt',
+                'META-INF/NOTICE',
+                'META-INF/NOTICE.txt',
+            ]
+        }
+    }
+
+    // ------------------------------------------------------------------------
+    // LINT
+    // ------------------------------------------------------------------------
+
+    lint {
+        abortOnError false
+        checkReleaseBuilds false
+    }
+}
+
+// ============================================================================
+// DEPENDENCIES
+// ============================================================================
+
+dependencies {
+
+    // ------------------------------------------------------------------------
+    // ANDROIDX
+    // ------------------------------------------------------------------------
+
+    // AppCompat (optional — we use plain Activity)
+    // implementation 'androidx.appcompat:appcompat:1.6.1'
+
+    // ------------------------------------------------------------------------
+    // NOTE: Bowie does NOT need:
+    //   - Kotlin stdlib
+    //   - AndroidX (we use plain Activity)
+    //   - Any external libraries
+    //
+    // Everything is built from scratch.
+    // ------------------------------------------------------------------------
+}
