@@ -6,6 +6,14 @@
 # it under the terms of the GNU General Public License as published by
 # the Free Software Foundation, either version 3 of the License, or
 # (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
 # ============================================================================
 
 # ============================================================================
@@ -35,6 +43,7 @@ CORE_DIR        := core
 INCLUDE_DIR     := $(CORE_DIR)/include
 SRC_DIR         := $(CORE_DIR)/src
 TEST_DIR        := $(CORE_DIR)/tests
+PLATFORM_DIR    := platforms
 
 BUILD_DIR       := build
 OBJ_DIR         := $(BUILD_DIR)/obj
@@ -149,9 +158,9 @@ CORE_SRCS += \
     $(SRC_DIR)/core/thread.c
 
 # Phase 3: Platform (Cross-Platform)
-# NOTE: Cross-platform platform.c is in core/src/platform/
+# NOTE: platform.c is in platforms/ (root level)
 CORE_SRCS += \
-    $(SRC_DIR)/platform/platform.c
+    $(PLATFORM_DIR)/platform.c
 
 CORE_OBJS := $(patsubst %.c,$(OBJ_DIR)/%.o,$(CORE_SRCS))
 
