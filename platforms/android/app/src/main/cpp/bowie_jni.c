@@ -1,5 +1,4 @@
-
-/*
+ /*
  * Wingo — P2P Internet Sharing Tool (Repo: Bowie)
  * Copyright (C) 2024 ASBM Team
  *
@@ -20,16 +19,26 @@
 /*
  * Bowie JNI Bridge
  *
- * This file provides the bridge between the Java/Kotlin side of the
- * Android app and the native C engine.
+ * This is the bridge between Java (BowieNative.java) and C (Bowie Engine).
  *
- * It handles:
- *   - Engine lifecycle (init, start, stop)
- *   - TUN fd from VpnService
- *   - Status queries
- *   - Log forwarding to Android logcat
+ * What it does:
+ *   - Initialize the engine
+ *   - Start/stop the engine
+ *   - Set TUN fd from VpnService
+ *   - Query status and statistics
  *
- * The Java side calls these functions via JNI.
+ * What it does NOT do:
+ *   - TUN creation (Java VpnService does this)
+ *   - Interface configuration (Java does this)
+ *   - Routing (Java does this)
+ *
+ * NOTE: Some functions require Phase 4-7 to be complete:
+ *   - DHT bootstrap (Phase 4)
+ *   - NAT traversal (Phase 5)
+ *   - Crypto (Phase 6)
+ *   - Tunnel (Phase 7)
+ *
+ * For now, they log a clear message and return gracefully.
  */
 
 #include <jni.h>
@@ -38,6 +47,7 @@
 #include <string.h>
 #include <pthread.h>
 #include <unistd.h>
+#include <errno.h>
 
 #include "wingo/common.h"
 #include "wingo/error.h"
@@ -45,6 +55,8 @@
 #include "wingo/core/engine.h"
 #include "wingo/platform/platform.h"
 #include "wingo/util/time.h"
+
+#include "platforms/android/platform.h"
 
 /* ============================================================================
  * LOGGING
@@ -72,7 +84,6 @@ static wingo_engine_t *g_engine = NULL;
  * TUN file descriptor from VpnService.
  *
  * Set via BowieNative.startWithFd().
- * Used by the engine for tunnel I/O.
  */
 static int g_tun_fd = -1;
 
@@ -92,6 +103,17 @@ static JavaVM *g_jvm = NULL;
  * Flag: is the native library initialized?
  */
 static bool g_initialized = false;
+
+/*
+ * Flag: is the engine running?
+ */
+static bool g_running = false;
+
+/* ============================================================================
+ * FORWARD DECLARATIONS
+ * ============================================================================ */
+
+static void *engine_thread_func(void *arg);
 
 /* ============================================================================
  * JNI LIFECYCLE
@@ -139,6 +161,8 @@ JNI_OnUnload(JavaVM *vm, void *reserved)
 
     LOGI("JNI_OnUnload called");
 
+    pthread_mutex_lock(&g_mutex);
+
     /* Stop engine if running */
     if (g_engine != NULL) {
         wingo_engine_stop(g_engine);
@@ -151,41 +175,42 @@ JNI_OnUnload(JavaVM *vm, void *reserved)
 
     g_jvm = NULL;
     g_initialized = false;
+    g_running = false;
+    g_tun_fd = -1;
+
+    pthread_mutex_unlock(&g_mutex);
 }
 
 /* ============================================================================
- * ANDROID LOG CALLBACK
+ * ENGINE THREAD
  * ============================================================================ */
 
 /*
- * Custom log callback that forwards to Android logcat.
+ * Engine thread function.
  *
- * We use this instead of the default file/stdout logging because
- * Android doesn't have stdout/stderr in the usual sense.
+ * Runs the engine's main loop in a separate thread.
+ *
+ * This is needed because wingo_engine_run() blocks.
  */
-static void android_log_callback(wingo_log_level_t level,
-                                 const char *message)
+static void *engine_thread_func(void *arg)
 {
-    switch (level) {
-    case WINGO_LOG_TRACE:
-    case WINGO_LOG_DEBUG:
-        LOGD("%s", message);
-        break;
-    case WINGO_LOG_INFO:
-    case WINGO_LOG_NOTICE:
-        LOGI("%s", message);
-        break;
-    case WINGO_LOG_WARN:
-        LOGW("%s", message);
-        break;
-    case WINGO_LOG_ERROR:
-    case WINGO_LOG_FATAL:
-        LOGE("%s", message);
-        break;
-    default:
-        LOGI("%s", message);
-        break;
+    wingo_engine_t *engine = (wingo_engine_t *)arg;
+    wingo_error_t rc;
+
+    LOGI("Engine thread started");
+
+    rc = wingo_engine_run(engine);
+    if (rc != WINGO_SUCCESS) {
+        LOGE("Engine run failed: %s", wingo_error_str(rc));
     }
+
+    LOGI("Engine thread stopped");
+
+    pthread_mutex_lock(&g_mutex);
+    g_running = false;
+    pthread_mutex_unlock(&g_mutex);
+
+    return NULL;
 }
 
 /* ============================================================================
@@ -196,12 +221,12 @@ static void android_log_callback(wingo_log_level_t level,
  * Initialize the native library.
  *
  * Called from Java: BowieNative.init()
- *
- * This is a lightweight initialization. The engine is not created yet.
  */
 JNIEXPORT void JNICALL
 Java_com_bowie_BowieNative_init(JNIEnv *env, jclass clazz)
 {
+    wingo_log_config_t log_config;
+
     WINGO_UNUSED(env);
     WINGO_UNUSED(clazz);
 
@@ -215,18 +240,7 @@ Java_com_bowie_BowieNative_init(JNIEnv *env, jclass clazz)
 
     LOGI("Initializing native library");
 
-    /*
-     * Initialize logging.
-     *
-     * We configure it to forward to Android logcat.
-     *
-     * NOTE: The log callback API is in Phase 2 (log.h).
-     *       We use wingo_log_init() with default config,
-     *       and the default output goes to stderr, which
-     *       Android redirects to logcat automatically.
-     */
-    wingo_log_config_t log_config;
-
+    /* Initialize logging */
     memset(&log_config, 0, sizeof(log_config));
     log_config.level = WINGO_LOG_INFO;
     log_config.targets = WINGO_LOG_TARGET_STDERR;
@@ -241,6 +255,11 @@ Java_com_bowie_BowieNative_init(JNIEnv *env, jclass clazz)
     g_initialized = true;
 
     LOGI("Native library initialized");
+    LOGI("  Platform: %s", wingo_platform_name());
+    LOGI("  Version:  %s", wingo_platform_version());
+    LOGI("  Arch:     %s", wingo_platform_arch());
+    LOGI("  API:      %d", wingo_android_api_level());
+    LOGI("  Model:    %s", wingo_android_model());
 
     pthread_mutex_unlock(&g_mutex);
 }
@@ -262,7 +281,7 @@ Java_com_bowie_BowieNative_start(JNIEnv *env, jclass clazz)
     pthread_mutex_lock(&g_mutex);
 
     if (g_engine != NULL) {
-        LOGW("Engine already running");
+        LOGW("Engine already created");
         pthread_mutex_unlock(&g_mutex);
         return JNI_TRUE;
     }
@@ -273,9 +292,9 @@ Java_com_bowie_BowieNative_start(JNIEnv *env, jclass clazz)
     wingo_engine_config_default(&config);
     config.name = "bowie-android";
     config.log_level = WINGO_LOG_INFO;
-    config.log_color = false;   /* No colors on Android */
-    config.threads = 2;         /* Fewer threads on mobile */
-    config.max_peers = 32;      /* Fewer peers on mobile */
+    config.log_color = false;
+    config.threads = 2;
+    config.max_peers = 32;
     config.max_connections = 64;
     config.tick_ms = 10;
     config.idle_ms = 1000;
@@ -298,14 +317,6 @@ Java_com_bowie_BowieNative_start(JNIEnv *env, jclass clazz)
         return JNI_FALSE;
     }
 
-    /*
-     * NOTE: We don't call wingo_engine_run() here because it blocks.
-     *       The engine is started via startWithFd() from the VpnService.
-     *
-     *       In Phase 3, the engine can be initialized but not run
-     *       until the TUN fd is available.
-     */
-
     LOGI("Engine initialized");
 
     pthread_mutex_unlock(&g_mutex);
@@ -316,14 +327,13 @@ Java_com_bowie_BowieNative_start(JNIEnv *env, jclass clazz)
  * Start the engine with a TUN file descriptor.
  *
  * Called from Java: BowieNative.startWithFd(fd)
- *
- * This is called from BowieVpnService after VpnService.establish()
- * provides the TUN fd.
  */
 JNIEXPORT jboolean JNICALL
 Java_com_bowie_BowieNative_startWithFd(JNIEnv *env, jclass clazz, jint fd)
 {
     wingo_error_t rc;
+    pthread_t thread;
+    int thread_rc;
 
     WINGO_UNUSED(env);
     WINGO_UNUSED(clazz);
@@ -332,10 +342,24 @@ Java_com_bowie_BowieNative_startWithFd(JNIEnv *env, jclass clazz, jint fd)
 
     LOGI("Starting with TUN fd: %d", fd);
 
+    if (fd < 0) {
+        LOGE("Invalid TUN fd");
+        pthread_mutex_unlock(&g_mutex);
+        return JNI_FALSE;
+    }
+
     g_tun_fd = fd;
 
+    /* Pass fd to platform */
+    rc = wingo_tun_set_android_fd(fd);
+    if (rc != WINGO_SUCCESS) {
+        LOGE("Failed to set TUN fd: %s", wingo_error_str(rc));
+        pthread_mutex_unlock(&g_mutex);
+        return JNI_FALSE;
+    }
+
     /*
-     * NOTE: In Phase 7 (Tunnel), we'll pass this fd to the engine.
+     * NOTE: In Phase 7 (Tunnel), we'll pass the fd to the engine.
      *
      *       For now (Phase 3), we just store it.
      *
@@ -372,13 +396,19 @@ Java_com_bowie_BowieNative_startWithFd(JNIEnv *env, jclass clazz, jint fd)
         }
     }
 
-    /*
-     * NOTE: In Phase 7, we'll call wingo_engine_run() in a separate thread.
-     *
-     *       For now, we just log that the fd is set.
-     */
+    /* Start engine thread */
+    thread_rc = pthread_create(&thread, NULL, engine_thread_func, g_engine);
+    if (thread_rc != 0) {
+        LOGE("Failed to create engine thread: %s", strerror(thread_rc));
+        pthread_mutex_unlock(&g_mutex);
+        return JNI_FALSE;
+    }
 
-    LOGI("TUN fd set: %d", fd);
+    pthread_detach(thread);
+
+    g_running = true;
+
+    LOGI("Engine thread started with TUN fd %d", fd);
 
     pthread_mutex_unlock(&g_mutex);
     return JNI_TRUE;
@@ -401,11 +431,22 @@ Java_com_bowie_BowieNative_stop(JNIEnv *env, jclass clazz)
 
     if (g_engine != NULL) {
         wingo_engine_stop(g_engine);
+
+        /* Wait a bit for engine thread to stop */
+        int wait_ms = 0;
+        while (g_running && wait_ms < 5000) {
+            pthread_mutex_unlock(&g_mutex);
+            usleep(100000);  /* 100ms */
+            pthread_mutex_lock(&g_mutex);
+            wait_ms += 100;
+        }
+
         wingo_engine_free(g_engine);
         g_engine = NULL;
     }
 
     g_tun_fd = -1;
+    g_running = false;
 
     LOGI("Engine stopped");
 
@@ -416,8 +457,6 @@ Java_com_bowie_BowieNative_stop(JNIEnv *env, jclass clazz)
  * Get engine status.
  *
  * Called from Java: BowieNative.getStatus()
- *
- * Returns a string describing the engine state.
  */
 JNIEXPORT jstring JNICALL
 Java_com_bowie_BowieNative_getStatus(JNIEnv *env, jclass clazz)
@@ -431,7 +470,8 @@ Java_com_bowie_BowieNative_getStatus(JNIEnv *env, jclass clazz)
     if (g_engine == NULL) {
         snprintf(buf, sizeof(buf),
                  "State: not running\n"
-                 "TUN fd: %d",
+                 "TUN fd: %d\n"
+                 "Running: no",
                  g_tun_fd);
     } else {
         wingo_engine_state_t state = wingo_engine_get_state(g_engine);
@@ -447,11 +487,13 @@ Java_com_bowie_BowieNative_getStatus(JNIEnv *env, jclass clazz)
                  "State: %s\n"
                  "Uptime: %llds\n"
                  "Node ID: %s\n"
-                 "TUN fd: %d",
+                 "TUN fd: %d\n"
+                 "Running: %s",
                  state_name,
                  (long long)uptime,
                  id_hex,
-                 g_tun_fd);
+                 g_tun_fd,
+                 g_running ? "yes" : "no");
     }
 
     pthread_mutex_unlock(&g_mutex);
@@ -551,10 +593,14 @@ Java_com_bowie_BowieNative_getPlatformInfo(JNIEnv *env, jclass clazz)
     snprintf(buf, sizeof(buf),
              "Platform: %s\n"
              "Version:  %s\n"
-             "Arch:     %s",
+             "Arch:     %s\n"
+             "API:      %d\n"
+             "Model:    %s",
              wingo_platform_name(),
              wingo_platform_version(),
-             wingo_platform_arch());
+             wingo_platform_arch(),
+             wingo_android_api_level(),
+             wingo_android_model());
 
     return (*env)->NewStringUTF(env, buf);
 }
