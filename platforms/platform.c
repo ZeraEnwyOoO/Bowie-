@@ -22,6 +22,7 @@
 #include <unistd.h>
 #include <sys/utsname.h>
 #include <sys/types.h>
+#include <sys/stat.h> 
 #include <pwd.h>
 #include <errno.h>
 #include <stdlib.h>
