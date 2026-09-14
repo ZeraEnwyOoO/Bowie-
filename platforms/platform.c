@@ -15,8 +15,8 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
-
-#include "wingo/platform/platform.h"
+ #include "platform.h"         
+#include "platforms/platform.h"
 #include "wingo/util/time.h"
 
 #include <string.h>
