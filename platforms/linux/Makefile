@@ -1,12 +1,11 @@
-# ============================================================================
+ # ============================================================================
 # Wingo — P2P Internet Sharing Tool (Repo: Bowie)
 # Copyright (C) 2024 ASBM Team
 #
 # Linux Platform Build
 #
 # This Makefile builds the Linux-specific parts of Bowie:
-#   - TUN/TAP interface
-#   - Platform implementation
+#   - Platform implementation (TUN, network, iptables)
 #   - Main entry point
 #   - Bowie Tools CLI
 #
@@ -60,9 +59,6 @@ BOWIE_BIN       := $(BIN_DIR)/bowie
 # Tools binary
 TOOLS_BIN       := $(BIN_DIR)/bowie-tools
 
-# Test binary
-TEST_BIN        := $(BIN_DIR)/bowie-test
-
 # ============================================================================
 # COMPILER FLAGS
 # ============================================================================
@@ -97,7 +93,8 @@ DEFINES := \
     -D_POSIX_C_SOURCE=200809L
 
 INCLUDES := \
-    -I$(INCLUDE_DIR)
+    -I$(INCLUDE_DIR) \
+    -I$(ROOT_DIR)
 
 CFLAGS := \
     $(CSTD) \
@@ -122,8 +119,7 @@ LIBS := \
 
 # Linux platform sources
 PLATFORM_SRCS := \
-    $(PLATFORM_DIR)/platform.c \
-    $(PLATFORM_DIR)/tun.c
+    $(PLATFORM_DIR)/platform.c
 
 # Main source
 MAIN_SRC := $(PLATFORM_DIR)/main.c
@@ -131,14 +127,10 @@ MAIN_SRC := $(PLATFORM_DIR)/main.c
 # Tools source
 TOOLS_SRC := $(PLATFORM_DIR)/bowie-tools.c
 
-# Test source
-TEST_SRC := $(PLATFORM_DIR)/bowie-test.c
-
 # Object files
 PLATFORM_OBJS := $(patsubst $(PLATFORM_DIR)/%.c,$(OBJ_DIR)/%.o,$(PLATFORM_SRCS))
 MAIN_OBJ := $(OBJ_DIR)/main.o
 TOOLS_OBJ := $(OBJ_DIR)/bowie-tools.o
-TEST_OBJ := $(OBJ_DIR)/bowie-test.o
 
 # ============================================================================
 # DEFAULT TARGET
@@ -179,17 +171,6 @@ $(TOOLS_BIN): $(PLATFORM_OBJS) $(TOOLS_OBJ) $(CORE_LIB) | $(BIN_DIR)
 	@echo "  ✓ Built: $@"
 
 # ============================================================================
-# TEST BINARY
-# ============================================================================
-
-$(TEST_BIN): $(PLATFORM_OBJS) $(TEST_OBJ) $(CORE_LIB) | $(BIN_DIR)
-	@echo "  LD      $@"
-	@$(CC) $(LDFLAGS) $(PLATFORM_OBJS) $(TEST_OBJ) \
-	    -L$(LIB_DIR) -lbowie \
-	    $(LIBS) -o $@
-	@echo "  ✓ Built: $@"
-
-# ============================================================================
 # OBJECT FILES
 # ============================================================================
 
@@ -218,17 +199,12 @@ $(LIB_DIR):
 .PHONY: run
 run: $(BOWIE_BIN)
 	@echo "Running $(BOWIE_BIN)..."
-	@sudo $(BOWIE_BIN)
+	@sudo $(BOWIE_BIN) --tun
 
 .PHONY: run-tools
 run-tools: $(TOOLS_BIN)
 	@echo "Running $(TOOLS_BIN)..."
-	@$(TOOLS_BIN)
-
-.PHONY: run-test
-run-test: $(TEST_BIN)
-	@echo "Running $(TEST_BIN)..."
-	@$(TEST_BIN)
+	@$(TOOLS_BIN) diag interfaces
 
 # ============================================================================
 # INSTALL
@@ -260,7 +236,7 @@ uninstall:
 clean:
 	@echo "  CLEAN   $(OBJ_DIR)"
 	@$(RMDIR) $(OBJ_DIR)
-	@$(RM) $(BOWIE_BIN) $(TOOLS_BIN) $(TEST_BIN)
+	@$(RM) $(BOWIE_BIN) $(TOOLS_BIN)
 
 .PHONY: clean-all
 clean-all: clean
@@ -280,12 +256,11 @@ info:
 	@echo "Core lib:      $(CORE_LIB)"
 	@echo ""
 	@echo "Sources:"
-	@for src in $(PLATFORM_SRCS) $(MAIN_SRC); do echo "  $$src"; done
+	@for src in $(PLATFORM_SRCS) $(MAIN_SRC) $(TOOLS_SRC); do echo "  $$src"; done
 	@echo ""
 	@echo "Binaries:"
 	@echo "  $(BOWIE_BIN)"
 	@echo "  $(TOOLS_BIN)"
-	@echo "  $(TEST_BIN)"
 
 # ============================================================================
 # HELP
@@ -306,7 +281,6 @@ help:
 	@echo "Run targets:"
 	@echo "  run             Run main binary (requires sudo)"
 	@echo "  run-tools       Run tools binary"
-	@echo "  run-test        Run test binary"
 	@echo ""
 	@echo "Clean targets:"
 	@echo "  clean           Remove object files and binaries"
