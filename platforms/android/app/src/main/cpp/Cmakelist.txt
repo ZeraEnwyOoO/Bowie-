@@ -1,1 +1,211 @@
+# ============================================================================
+# Wingo — P2P Internet Sharing Tool (Repo: Bowie)
+# Copyright (C) 2024 ASBM Team
+#
+# Android NDK CMake Build
+#
+# This builds the native library (libbowie.so) for Android.
+#
+# It links:
+#   - The core library (libbowie.a) — built by NDK
+#   - The JNI bridge (bowie_jni.c)
+#   - Android log library
+#
+# ============================================================================
 
+cmake_minimum_required(VERSION 3.22.1)
+
+# ============================================================================
+# PROJECT INFO
+# ============================================================================
+
+project(bowie
+    VERSION 0.1.0
+    DESCRIPTION "P2P Internet Sharing Tool"
+    LANGUAGES C
+)
+
+# ============================================================================
+# C STANDARD
+# ============================================================================
+
+set(CMAKE_C_STANDARD 11)
+set(CMAKE_C_STANDARD_REQUIRED ON)
+set(CMAKE_C_EXTENSIONS ON)
+
+# ============================================================================
+# PATHS
+# ============================================================================
+
+# Root of the project
+#   CMAKE_CURRENT_SOURCE_DIR = platforms/android/app/src/main/cpp
+#   PROJECT_ROOT              = ../../../../..
+get_filename_component(PROJECT_ROOT
+    "${CMAKE_CURRENT_SOURCE_DIR}/../../../../.."
+    ABSOLUTE
+)
+
+# Core directories
+set(CORE_DIR      "${PROJECT_ROOT}/core")
+set(CORE_INCLUDE  "${CORE_DIR}/include")
+set(CORE_SRC      "${CORE_DIR}/src")
+
+# Platform directories
+set(PLATFORM_DIR       "${PROJECT_ROOT}/platforms/android")
+set(PLATFORM_CPP_DIR   "${CMAKE_CURRENT_SOURCE_DIR}")
+
+# ============================================================================
+# COMPILER FLAGS
+# ============================================================================
+
+set(BOWIE_C_FLAGS
+    -Wall
+    -Wextra
+    -Wno-unused-parameter
+    -Wno-unused-function
+    -Wno-format-truncation
+    -Wno-stringop-truncation
+    -fPIC
+    -fvisibility=hidden
+    -ffunction-sections
+    -fdata-sections
+    -O2
+    -g
+)
+
+set(BOWIE_DEFINES
+    _GNU_SOURCE
+    _POSIX_C_SOURCE=200809L
+)
+
+set(BOWIE_INCLUDES
+    "${CORE_INCLUDE}"
+    "${PROJECT_ROOT}"
+)
+
+# ============================================================================
+# CORE SOURCES
+# ============================================================================
+
+# Phase 1: Foundation
+set(CORE_SOURCES
+    "${CORE_SRC}/error.c"
+    "${CORE_SRC}/log.c"
+    "${CORE_SRC}/util/buffer.c"
+    "${CORE_SRC}/util/list.c"
+    "${CORE_SRC}/util/queue.c"
+    "${CORE_SRC}/util/hashmap.c"
+    "${CORE_SRC}/util/time.c"
+    "${CORE_SRC}/util/random.c"
+)
+
+# Phase 2: Core Engine
+list(APPEND CORE_SOURCES
+    "${CORE_SRC}/core/engine.c"
+    "${CORE_SRC}/core/event.c"
+    "${CORE_SRC}/core/state.c"
+    "${CORE_SRC}/core/thread.c"
+)
+
+# Phase 3: Platform (cross-platform)
+list(APPEND CORE_SOURCES
+    "${CORE_SRC}/platform/platform.c"
+)
+
+# ============================================================================
+# PLATFORM SOURCES (ANDROID)
+# ============================================================================
+
+set(PLATFORM_SOURCES
+    "${PLATFORM_DIR}/platform.c"
+)
+
+# ============================================================================
+# JNI SOURCES
+# ============================================================================
+
+set(JNI_SOURCES
+    "${PLATFORM_CPP_DIR}/bowie_jni.c"
+)
+
+# ============================================================================
+# NATIVE LIBRARY
+# ============================================================================
+
+add_library(bowie SHARED
+    ${CORE_SOURCES}
+    ${PLATFORM_SOURCES}
+    ${JNI_SOURCES}
+)
+
+# ============================================================================
+# TARGET CONFIGURATION
+# ============================================================================
+
+target_include_directories(bowie PRIVATE
+    ${BOWIE_INCLUDES}
+)
+
+target_compile_options(bowie PRIVATE
+    ${BOWIE_C_FLAGS}
+)
+
+target_compile_definitions(bowie PRIVATE
+    ${BOWIE_DEFINES}
+)
+
+# ============================================================================
+# ANDROID LOG LIBRARY
+# ============================================================================
+
+find_library(
+    log-lib
+    log
+)
+
+# ============================================================================
+# LINK LIBRARIES
+# ============================================================================
+
+target_link_libraries(bowie
+    ${log-lib}
+    pthread
+)
+
+# ============================================================================
+# LINKER FLAGS
+# ============================================================================
+
+target_link_options(bowie PRIVATE
+    -Wl,--gc-sections
+    -Wl,--exclude-libs,ALL
+)
+
+# ============================================================================
+# OUTPUT NAME
+# ============================================================================
+
+set_target_properties(bowie PROPERTIES
+    OUTPUT_NAME "bowie"
+    PREFIX "lib"
+    SUFFIX ".so"
+)
+
+# ============================================================================
+# INSTALL
+# ============================================================================
+
+# Android installs automatically into the APK.
+# No install() rules needed.
+
+# ============================================================================
+# STATUS
+# ============================================================================
+
+message(STATUS "Bowie Android Build:")
+message(STATUS "  Project root:  ${PROJECT_ROOT}")
+message(STATUS "  Core include:  ${CORE_INCLUDE}")
+message(STATUS "  Core sources:  ${CORE_SOURCES}")
+message(STATUS "  Platform:      ${PLATFORM_SOURCES}")
+message(STATUS "  JNI:           ${JNI_SOURCES}")
+message(STATUS "  Output:        libbowie.so")
