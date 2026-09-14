@@ -1,1 +1,106 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Wingo — P2P Internet Sharing Tool (Repo: Bowie)
+  Copyright (C) 2024 ASBM Team
 
+  This program is free software: you can redistribute it and/or modify
+  it under the terms of the GNU General Public License as published by
+  the Free Software Foundation, either version 3 of the License, or
+  (at your option) any later version.
+
+  This program is distributed in the hope that it will be useful,
+  but WITHOUT ANY WARRANTY; without even the implied warranty of
+  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+  GNU General Public License for more details.
+
+  You should have received a copy of the GNU General Public License
+  along with this program.  If not, see <https://www.gnu.org/licenses/>.
+-->
+<resources>
+
+    <!-- ====================================================================
+         APP INFO
+         ==================================================================== -->
+
+    <string name="app_name">Bowie</string>
+    <string name="app_description">P2P Internet Sharing Tool</string>
+    <string name="app_version">0.1.0</string>
+
+    <!-- ====================================================================
+         VPN SERVICE
+         ==================================================================== -->
+
+    <string name="vpn_service_name">Bowie VPN</string>
+    <string name="vpn_service_description">Share internet with peers</string>
+
+    <!-- ====================================================================
+         NOTIFICATION
+         ==================================================================== -->
+
+    <string name="notification_channel_name">Bowie VPN</string>
+    <string name="notification_channel_description">VPN status notification</string>
+
+    <string name="notification_title">Bowie VPN</string>
+    <string name="notification_text_running">P2P Internet Sharing is active</string>
+    <string name="notification_text_stopped">VPN stopped</string>
+
+    <!-- ====================================================================
+         TERMINAL UI
+         ==================================================================== -->
+
+    <string name="terminal_title">Bowie Terminal</string>
+    <string name="terminal_hint">Command...</string>
+    <string name="terminal_send">Send</string>
+    <string name="terminal_start">START</string>
+    <string name="terminal_stop">STOP</string>
+
+    <!-- ====================================================================
+         COMMANDS
+         ==================================================================== -->
+
+    <string name="cmd_help">Help</string>
+    <string name="cmd_start">Start VPN</string>
+    <string name="cmd_stop">Stop VPN</string>
+    <string name="cmd_status">Show engine status</string>
+    <string name="cmd_stats">Show statistics</string>
+    <string name="cmd_platform">Show platform info</string>
+    <string name="cmd_version">Show version</string>
+    <string name="cmd_clear">Clear output</string>
+
+    <!-- ====================================================================
+         STATUS MESSAGES
+         ==================================================================== -->
+
+    <string name="status_starting">Starting VPN...</string>
+    <string name="status_started">VPN started</string>
+    <string name="status_stopping">Stopping VPN...</string>
+    <string name="status_stopped">VPN stopped</string>
+    <string name="status_running">VPN already running</string>
+    <string name="status_not_running">VPN not running</string>
+
+    <!-- ====================================================================
+         ERRORS
+         ==================================================================== -->
+
+    <string name="error_native_not_loaded">Native library not loaded</string>
+    <string name="error_vpn_permission">VPN permission denied</string>
+    <string name="error_vpn_establish">Failed to establish VPN</string>
+    <string name="error_unknown_command">Unknown command</string>
+
+    <!-- ====================================================================
+         PERMISSIONS
+         ==================================================================== -->
+
+    <string name="permission_vpn_granted">VPN permission granted</string>
+    <string name="permission_vpn_denied">VPN permission denied</string>
+
+    <!-- ====================================================================
+         DIALOGS
+         ==================================================================== -->
+
+    <string name="dialog_about_title">About Bowie</string>
+    <string name="dialog_about_message">Bowie is a P2P Internet Sharing Tool.\n\nVersion: 0.1.0\nLicense: GPL v3</string>
+    <string name="dialog_ok">OK</string>
+    <string name="dialog_cancel">Cancel</string>
+
+</resources>
