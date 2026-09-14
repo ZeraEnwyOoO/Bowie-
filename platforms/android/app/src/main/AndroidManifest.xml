@@ -1,1 +1,173 @@
 
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Wingo — P2P Internet Sharing Tool (Repo: Bowie)
+  Copyright (C) 2024 ASBM Team
+
+  This program is free software: you can redistribute it and/or modify
+  it under the terms of the GNU General Public License as published by
+  the Free Software Foundation, either version 3 of the License, or
+  (at your option) any later version.
+
+  This program is distributed in the hope that it will be useful,
+  but WITHOUT ANY WARRANTY; without even the implied warranty of
+  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+  GNU General Public License for more details.
+
+  You should have received a copy of the GNU General Public License
+  along with this program.  If not, see <https://www.gnu.org/licenses/>.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="com.bowie"
+    android:versionCode="1"
+    android:versionName="0.1.0">
+
+    <!-- ====================================================================
+         SDK VERSION
+         ==================================================================== -->
+
+    <!--
+      minSdk 24 = Android 7.0 (Nougat)
+      targetSdk 34 = Android 14 (Upside Down Cake)
+
+      minSdk 24 is required because:
+        - VpnService.Builder.setMtu() requires API 21
+        - VpnService.Builder.addDisallowedApplication() requires API 21
+        - We want modern features
+    -->
+    <uses-sdk
+        android:minSdkVersion="24"
+        android:targetSdkVersion="34" />
+
+    <!-- ====================================================================
+         PERMISSIONS
+         ==================================================================== -->
+
+    <!--
+      INTERNET — required for any network access
+    -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <!--
+      ACCESS_NETWORK_STATE — check network connectivity
+    -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
+    <!--
+      ACCESS_WIFI_STATE — check WiFi state
+    -->
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+
+    <!--
+      CHANGE_NETWORK_STATE — change network state
+    -->
+    <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE" />
+
+    <!--
+      FOREGROUND_SERVICE — run VPN service in foreground
+      Required for persistent VPN (Android 9+)
+    -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+
+    <!--
+      FOREGROUND_SERVICE_SPECIAL_USE — Android 14+ requirement
+      For VPN services
+    -->
+    <uses-permission
+        android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE"
+        android:minSdkVersion="34" />
+
+    <!--
+      POST_NOTIFICATIONS — show notification (Android 13+)
+    -->
+    <uses-permission
+        android:name="android.permission.POST_NOTIFICATIONS"
+        android:minSdkVersion="33" />
+
+    <!--
+      WAKE_LOCK — keep CPU awake (optional)
+    -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+
+    <!--
+      BIND_VPN_SERVICE — required for VpnService
+      NOTE: This is a SERVICE permission, not a USE permission.
+            It is declared inside the <service> element.
+    -->
+
+    <!-- ====================================================================
+         APPLICATION
+         ==================================================================== -->
+
+    <application
+        android:allowBackup="false"
+        android:icon="@android:drawable/ic_menu_compass"
+        android:label="@string/app_name"
+        android:supportsRtl="true"
+        android:theme="@android:style/Theme.Black.NoTitleBar"
+        android:usesCleartextTraffic="true"
+        android:extractNativeLibs="true">
+
+        <!-- ================================================================
+             MAIN ACTIVITY
+             ================================================================ -->
+
+        <!--
+          MainActivity — Terminal UI
+
+          - LAUNCHER: appears in app drawer
+          - singleTop: reuse existing instance
+        -->
+        <activity
+            android:name=".MainActivity"
+            android:label="@string/app_name"
+            android:exported="true"
+            android:launchMode="singleTop"
+            android:screenOrientation="portrait"
+            android:configChanges="orientation|screenSize|keyboardHidden">
+
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+
+        </activity>
+
+        <!-- ================================================================
+             VPN SERVICE
+             ================================================================ -->
+
+        <!--
+          BowieVpnService — VpnService for TUN interface
+
+          - BIND_VPN_SERVICE: required for VpnService
+          - exported="false": only our app can bind
+          - foregroundServiceType: specialUse (VPN)
+        -->
+        <service
+            android:name=".BowieVpnService"
+            android:label="@string/vpn_service_name"
+            android:permission="android.permission.BIND_VPN_SERVICE"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+
+            <intent-filter>
+                <action android:name="android.net.VpnService" />
+            </intent-filter>
+
+        </service>
+
+        <!-- ================================================================
+             META-DATA
+             ================================================================ -->
+
+        <!--
+          VPN service meta-data (optional)
+        -->
+        <meta-data
+            android:name="android.net.VpnService.SUPPORTS_ALWAYS_ON"
+            android:value="false" />
+
+    </application>
+
+</manifest>
