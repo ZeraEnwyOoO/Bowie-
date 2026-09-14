@@ -35,7 +35,6 @@ CORE_DIR        := core
 INCLUDE_DIR     := $(CORE_DIR)/include
 SRC_DIR         := $(CORE_DIR)/src
 TEST_DIR        := $(CORE_DIR)/tests
-PLATFORM_DIR    := platforms
 
 BUILD_DIR       := build
 OBJ_DIR         := $(BUILD_DIR)/obj
@@ -150,9 +149,9 @@ CORE_SRCS += \
     $(SRC_DIR)/core/thread.c
 
 # Phase 3: Platform (Cross-Platform)
-# NOTE: platform.c is in platforms/ (root level), NOT core/src/
+# NOTE: Cross-platform platform.c is in core/src/platform/
 CORE_SRCS += \
-    $(PLATFORM_DIR)/platform.c
+    $(SRC_DIR)/platform/platform.c
 
 CORE_OBJS := $(patsubst %.c,$(OBJ_DIR)/%.o,$(CORE_SRCS))
 
