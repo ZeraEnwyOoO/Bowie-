@@ -1,4 +1,4 @@
-/*
+ /*
  * Wingo — P2P Internet Sharing Tool (Repo: Bowie)
  * Copyright (C) 2024 ASBM Team
  *
@@ -19,8 +19,6 @@
 /*
  * Bowie — Linux Entry Point
  *
- * This is the main entry point for the Linux platform.
- *
  * Usage:
  *   sudo ./bowie [options]
  *
@@ -28,18 +26,15 @@
  *   -h, --help              Show help
  *   -v, --version           Show version
  *   -c, --config FILE       Config file
- *   -l, --log-level LEVEL   Log level (trace, debug, info, warn, error)
+ *   -l, --log-level LEVEL   Log level
  *   -p, --port PORT         Listen port (default: 6881)
- *   -m, --mode MODE         Mode: host, client, both (default: host)
- *       --peer HOST:PORT    Peer to connect to (client mode)
- *       --no-dht            Disable DHT
- *       --no-nat            Disable NAT traversal
- *       --no-crypto         Disable encryption
+ *   -m, --mode MODE         Mode: host, client, both
+ *   -P, --peer HOST:PORT    Peer to connect to
  *       --tun               Enable TUN interface
- *       --tun-name NAME     TUN interface name
+ *       --tun-name NAME     TUN name (default: bowie0)
  *       --tun-mtu MTU       TUN MTU (default: 1400)
+ *       --tun-ip IP         TUN IP (default: 10.0.0.2)
  *       --daemon            Run as daemon
- *       --foreground        Run in foreground (default)
  */
 
 #include "wingo/common.h"
@@ -49,6 +44,8 @@
 #include "wingo/platform/platform.h"
 #include "wingo/util/time.h"
 #include "wingo/util/random.h"
+
+#include "platforms/linux/platform.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -67,6 +64,8 @@
 #define BOWIE_DEFAULT_PORT      6881
 #define BOWIE_DEFAULT_TUN_NAME  "bowie0"
 #define BOWIE_DEFAULT_TUN_MTU   1400
+#define BOWIE_DEFAULT_TUN_IP    "10.0.0.2"
+#define BOWIE_DEFAULT_TUN_MASK  "255.255.255.0"
 #define BOWIE_PID_FILE          "/tmp/bowie.pid"
 
 /* ============================================================================
@@ -74,6 +73,7 @@
  * ============================================================================ */
 
 static wingo_engine_t *g_engine = NULL;
+static wingo_tun_t *g_tun = NULL;
 static volatile sig_atomic_t g_running = 1;
 static volatile sig_atomic_t g_reload = 0;
 
@@ -93,6 +93,8 @@ typedef struct {
     bool        tun_enabled;
     const char *tun_name;
     int         tun_mtu;
+    const char *tun_ip;
+    const char *tun_mask;
     bool        daemon;
     bool        show_help;
     bool        show_version;
@@ -105,6 +107,8 @@ static void args_init(bowie_args_t *args)
     args->mode = "host";
     args->tun_name = BOWIE_DEFAULT_TUN_NAME;
     args->tun_mtu = BOWIE_DEFAULT_TUN_MTU;
+    args->tun_ip = BOWIE_DEFAULT_TUN_IP;
+    args->tun_mask = BOWIE_DEFAULT_TUN_MASK;
 }
 
 /* ============================================================================
@@ -152,85 +156,9 @@ static wingo_error_t install_signal_handlers(void)
         return WINGO_ERR_GENERIC;
     }
 
-    /* Ignore SIGPIPE */
     signal(SIGPIPE, SIG_IGN);
 
     return WINGO_SUCCESS;
-}
-
-/* ============================================================================
- * DAEMON
- * ============================================================================ */
-
-static wingo_error_t daemonize(void)
-{
-    pid_t pid;
-    int fd;
-
-    /* Fork #1 */
-    pid = fork();
-    if (pid < 0) {
-        return WINGO_ERR_GENERIC;
-    }
-    if (pid > 0) {
-        exit(EXIT_SUCCESS);
-    }
-
-    /* Become session leader */
-    if (setsid() < 0) {
-        return WINGO_ERR_GENERIC;
-    }
-
-    /* Fork #2 */
-    pid = fork();
-    if (pid < 0) {
-        return WINGO_ERR_GENERIC;
-    }
-    if (pid > 0) {
-        exit(EXIT_SUCCESS);
-    }
-
-    /* Change working directory */
-    if (chdir("/") < 0) {
-        return WINGO_ERR_GENERIC;
-    }
-
-    /* Redirect stdio to /dev/null */
-    fd = open("/dev/null", O_RDWR);
-    if (fd >= 0) {
-        dup2(fd, STDIN_FILENO);
-        dup2(fd, STDOUT_FILENO);
-        dup2(fd, STDERR_FILENO);
-        if (fd > 2) {
-            close(fd);
-        }
-    }
-
-    /* Set umask */
-    umask(027);
-
-    return WINGO_SUCCESS;
-}
-
-static wingo_error_t write_pidfile(const char *path)
-{
-    FILE *f;
-    pid_t pid = getpid();
-
-    f = fopen(path, "w");
-    if (f == NULL) {
-        return WINGO_ERR_FILE_OPEN;
-    }
-
-    fprintf(f, "%d\n", pid);
-    fclose(f);
-
-    return WINGO_SUCCESS;
-}
-
-static void remove_pidfile(const char *path)
-{
-    unlink(path);
 }
 
 /* ============================================================================
@@ -249,16 +177,16 @@ static void print_usage(const char *prog)
     printf("  -c, --config FILE       Config file\n");
     printf("  -l, --log-level LEVEL   Log level (trace, debug, info, warn, error)\n");
     printf("  -p, --port PORT         Listen port (default: %d)\n", BOWIE_DEFAULT_PORT);
-    printf("  -m, --mode MODE         Mode: host, client, both (default: host)\n");
-    printf("      --peer HOST:PORT    Peer to connect to (client mode)\n");
+    printf("  -m, --mode MODE         Mode: host, client, both\n");
+    printf("  -P, --peer HOST:PORT    Peer to connect to (client mode)\n");
     printf("      --no-dht            Disable DHT\n");
     printf("      --no-nat            Disable NAT traversal\n");
     printf("      --no-crypto         Disable encryption\n");
     printf("      --tun               Enable TUN interface\n");
-    printf("      --tun-name NAME     TUN interface name (default: %s)\n", BOWIE_DEFAULT_TUN_NAME);
+    printf("      --tun-name NAME     TUN name (default: %s)\n", BOWIE_DEFAULT_TUN_NAME);
     printf("      --tun-mtu MTU       TUN MTU (default: %d)\n", BOWIE_DEFAULT_TUN_MTU);
+    printf("      --tun-ip IP         TUN IP (default: %s)\n", BOWIE_DEFAULT_TUN_IP);
     printf("      --daemon            Run as daemon\n");
-    printf("      --foreground        Run in foreground (default)\n");
     printf("\n");
 }
 
@@ -273,10 +201,7 @@ static void print_version(void)
 
 static wingo_log_level_t parse_log_level(const char *str)
 {
-    if (str == NULL) {
-        return WINGO_LOG_INFO;
-    }
-
+    if (str == NULL) return WINGO_LOG_INFO;
     if (strcasecmp(str, "trace") == 0) return WINGO_LOG_TRACE;
     if (strcasecmp(str, "debug") == 0) return WINGO_LOG_DEBUG;
     if (strcasecmp(str, "info") == 0) return WINGO_LOG_INFO;
@@ -285,7 +210,6 @@ static wingo_log_level_t parse_log_level(const char *str)
     if (strcasecmp(str, "error") == 0) return WINGO_LOG_ERROR;
     if (strcasecmp(str, "fatal") == 0) return WINGO_LOG_FATAL;
     if (strcasecmp(str, "none") == 0) return WINGO_LOG_NONE;
-
     return WINGO_LOG_INFO;
 }
 
@@ -299,82 +223,39 @@ static int parse_args(int argc, char **argv, bowie_args_t *args)
         {"port",        required_argument, 0, 'p'},
         {"mode",        required_argument, 0, 'm'},
         {"peer",        required_argument, 0, 'P'},
-        {"no-dht",      no_argument,       0, 'D'},
-        {"no-nat",      no_argument,       0, 'N'},
-        {"no-crypto",   no_argument,       0, 'C'},
-        {"tun",         no_argument,       0, 'T'},
-        {"tun-name",    required_argument, 0, 'n'},
-        {"tun-mtu",     required_argument, 0, 'M'},
-        {"daemon",      no_argument,       0, 'd'},
-        {"foreground",  no_argument,       0, 'f'},
+        {"no-dht",      no_argument,       0, 1000},
+        {"no-nat",      no_argument,       0, 1001},
+        {"no-crypto",   no_argument,       0, 1002},
+        {"tun",         no_argument,       0, 1003},
+        {"tun-name",    required_argument, 0, 1004},
+        {"tun-mtu",     required_argument, 0, 1005},
+        {"tun-ip",      required_argument, 0, 1006},
+        {"daemon",      no_argument,       0, 1007},
         {0, 0, 0, 0}
     };
 
     int opt;
     int option_index = 0;
 
-    while ((opt = getopt_long(argc, argv, "hvc:l:p:m:P:DNC Tn:M:df",
+    while ((opt = getopt_long(argc, argv, "hvc:l:p:m:P:",
                               long_options, &option_index)) != -1) {
         switch (opt) {
-        case 'h':
-            args->show_help = true;
-            return 0;
+        case 'h': args->show_help = true; return 0;
+        case 'v': args->show_version = true; return 0;
+        case 'c': args->config_file = optarg; break;
+        case 'l': args->log_level = optarg; break;
+        case 'p': args->port = atoi(optarg); break;
+        case 'm': args->mode = optarg; break;
+        case 'P': args->peer = optarg; break;
 
-        case 'v':
-            args->show_version = true;
-            return 0;
-
-        case 'c':
-            args->config_file = optarg;
-            break;
-
-        case 'l':
-            args->log_level = optarg;
-            break;
-
-        case 'p':
-            args->port = atoi(optarg);
-            break;
-
-        case 'm':
-            args->mode = optarg;
-            break;
-
-        case 'P':
-            args->peer = optarg;
-            break;
-
-        case 'D':
-            args->no_dht = true;
-            break;
-
-        case 'N':
-            args->no_nat = true;
-            break;
-
-        case 'C':
-            args->no_crypto = true;
-            break;
-
-        case 'T':
-            args->tun_enabled = true;
-            break;
-
-        case 'n':
-            args->tun_name = optarg;
-            break;
-
-        case 'M':
-            args->tun_mtu = atoi(optarg);
-            break;
-
-        case 'd':
-            args->daemon = true;
-            break;
-
-        case 'f':
-            args->daemon = false;
-            break;
+        case 1000: args->no_dht = true; break;
+        case 1001: args->no_nat = true; break;
+        case 1002: args->no_crypto = true; break;
+        case 1003: args->tun_enabled = true; break;
+        case 1004: args->tun_name = optarg; break;
+        case 1005: args->tun_mtu = atoi(optarg); break;
+        case 1006: args->tun_ip = optarg; break;
+        case 1007: args->daemon = true; break;
 
         default:
             print_usage(argv[0]);
@@ -383,6 +264,47 @@ static int parse_args(int argc, char **argv, bowie_args_t *args)
     }
 
     return 0;
+}
+
+/* ============================================================================
+ * TUN SETUP
+ * ============================================================================ */
+
+static wingo_tun_t *setup_tun(const bowie_args_t *args)
+{
+    wingo_tun_config_t config;
+
+    if (!args->tun_enabled) {
+        return NULL;
+    }
+
+    /* Check root */
+    if (!wingo_platform_is_root()) {
+        fprintf(stderr, "Error: TUN requires root privileges\n");
+        return NULL;
+    }
+
+    /* Check TUN available */
+    if (!wingo_platform_has_tun()) {
+        fprintf(stderr, "Error: /dev/net/tun not available\n");
+        return NULL;
+    }
+
+    /* Configure TUN */
+    wingo_tun_config_default(&config);
+    config.name = args->tun_name;
+    config.mtu = args->tun_mtu;
+    config.ipv4_addr = args->tun_ip;
+    config.ipv4_netmask = args->tun_mask;
+
+    /* Open TUN */
+    wingo_tun_t *tun = wingo_tun_open(&config);
+    if (tun == NULL) {
+        fprintf(stderr, "Error: failed to open TUN\n");
+        return NULL;
+    }
+
+    return tun;
 }
 
 /* ============================================================================
@@ -411,16 +333,9 @@ int main(int argc, char **argv)
         return EXIT_SUCCESS;
     }
 
-    /* Check root (needed for TUN) */
-    if (args.tun_enabled && !wingo_platform_is_root()) {
-        fprintf(stderr, "Error: TUN requires root privileges\n");
-        fprintf(stderr, "Try: sudo %s %s\n", argv[0], "--tun");
-        return EXIT_FAILURE;
-    }
-
     /* Daemonize if requested */
     if (args.daemon) {
-        rc = daemonize();
+        rc = wingo_linux_daemonize();
         if (rc != WINGO_SUCCESS) {
             fprintf(stderr, "Error: failed to daemonize\n");
             return EXIT_FAILURE;
@@ -428,7 +343,24 @@ int main(int argc, char **argv)
     }
 
     /* Write PID file */
-    write_pidfile(BOWIE_PID_FILE);
+    wingo_linux_write_pidfile(BOWIE_PID_FILE);
+
+    /* Initialize platform */
+    rc = wingo_platform_init();
+    if (rc != WINGO_SUCCESS) {
+        fprintf(stderr, "Error: failed to init platform\n");
+        wingo_linux_remove_pidfile(BOWIE_PID_FILE);
+        return EXIT_FAILURE;
+    }
+
+    /* Setup TUN (if requested) */
+    g_tun = setup_tun(&args);
+    if (args.tun_enabled && g_tun == NULL) {
+        fprintf(stderr, "Error: TUN setup failed\n");
+        wingo_platform_shutdown();
+        wingo_linux_remove_pidfile(BOWIE_PID_FILE);
+        return EXIT_FAILURE;
+    }
 
     /* Initialize engine config */
     wingo_engine_config_default(&config);
@@ -444,7 +376,9 @@ int main(int argc, char **argv)
     g_engine = wingo_engine_new(&config);
     if (g_engine == NULL) {
         fprintf(stderr, "Error: failed to create engine\n");
-        remove_pidfile(BOWIE_PID_FILE);
+        if (g_tun != NULL) wingo_tun_close(g_tun);
+        wingo_platform_shutdown();
+        wingo_linux_remove_pidfile(BOWIE_PID_FILE);
         return EXIT_FAILURE;
     }
 
@@ -453,7 +387,9 @@ int main(int argc, char **argv)
     if (rc != WINGO_SUCCESS) {
         fprintf(stderr, "Error: failed to install signal handlers\n");
         wingo_engine_free(g_engine);
-        remove_pidfile(BOWIE_PID_FILE);
+        if (g_tun != NULL) wingo_tun_close(g_tun);
+        wingo_platform_shutdown();
+        wingo_linux_remove_pidfile(BOWIE_PID_FILE);
         return EXIT_FAILURE;
     }
 
@@ -463,7 +399,9 @@ int main(int argc, char **argv)
         fprintf(stderr, "Error: failed to init engine: %s\n",
                 wingo_error_str(rc));
         wingo_engine_free(g_engine);
-        remove_pidfile(BOWIE_PID_FILE);
+        if (g_tun != NULL) wingo_tun_close(g_tun);
+        wingo_platform_shutdown();
+        wingo_linux_remove_pidfile(BOWIE_PID_FILE);
         return EXIT_FAILURE;
     }
 
@@ -481,9 +419,15 @@ int main(int argc, char **argv)
         printf("  Mode:        %s\n", args.mode);
         printf("  Port:        %d\n", args.port);
         printf("  TUN:         %s\n", args.tun_enabled ? "enabled" : "disabled");
+        if (args.tun_enabled && g_tun != NULL) {
+            printf("  TUN name:    %s\n", wingo_tun_get_name(g_tun));
+            printf("  TUN MTU:     %d\n", wingo_tun_get_mtu(g_tun));
+            printf("  TUN IP:      %s\n", args.tun_ip);
+        }
         printf("  DHT:         %s\n", args.no_dht ? "disabled" : "enabled");
         printf("  NAT:         %s\n", args.no_nat ? "disabled" : "enabled");
         printf("  Crypto:      %s\n", args.no_crypto ? "disabled" : "enabled");
+        printf("  PID file:    %s\n", BOWIE_PID_FILE);
         printf("\n");
         printf("  Press Ctrl+C to stop.\n");
         printf("\n");
@@ -493,9 +437,6 @@ int main(int argc, char **argv)
     rc = wingo_engine_run(g_engine);
     if (rc != WINGO_SUCCESS) {
         fprintf(stderr, "Error: engine failed: %s\n", wingo_error_str(rc));
-        wingo_engine_free(g_engine);
-        remove_pidfile(BOWIE_PID_FILE);
-        return EXIT_FAILURE;
     }
 
     /* Shutdown */
@@ -503,12 +444,21 @@ int main(int argc, char **argv)
         printf("\nShutting down...\n");
     }
 
+    /* Cleanup */
     wingo_engine_free(g_engine);
-    remove_pidfile(BOWIE_PID_FILE);
+    g_engine = NULL;
+
+    if (g_tun != NULL) {
+        wingo_tun_close(g_tun);
+        g_tun = NULL;
+    }
+
+    wingo_platform_shutdown();
+    wingo_linux_remove_pidfile(BOWIE_PID_FILE);
 
     if (!args.daemon) {
         printf("Bowie stopped.\n");
     }
 
-    return EXIT_SUCCESS;
+    return (rc == WINGO_SUCCESS) ? EXIT_SUCCESS : EXIT_FAILURE;
 }
