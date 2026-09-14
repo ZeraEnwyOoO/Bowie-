@@ -35,6 +35,7 @@ CORE_DIR        := core
 INCLUDE_DIR     := $(CORE_DIR)/include
 SRC_DIR         := $(CORE_DIR)/src
 TEST_DIR        := $(CORE_DIR)/tests
+PLATFORM_DIR    := platforms
 
 BUILD_DIR       := build
 OBJ_DIR         := $(BUILD_DIR)/obj
@@ -149,10 +150,11 @@ CORE_SRCS += \
     $(SRC_DIR)/core/thread.c
 
 # Phase 3: Platform (Cross-Platform)
+# NOTE: platform.c is in platforms/ (root level), NOT core/src/
 CORE_SRCS += \
-    $(SRC_DIR)/platform/platform.c
+    $(PLATFORM_DIR)/platform.c
 
-CORE_OBJS := $(patsubst $(SRC_DIR)/%.c,$(OBJ_DIR)/%.o,$(CORE_SRCS))
+CORE_OBJS := $(patsubst %.c,$(OBJ_DIR)/%.o,$(CORE_SRCS))
 
 # ============================================================================
 # TEST SOURCES
@@ -187,7 +189,7 @@ $(LIB_TARGET): $(CORE_OBJS) | $(LIB_DIR)
 	@$(RANLIB) $@
 	@echo "  ✓ Library built: $@"
 
-$(OBJ_DIR)/%.o: $(SRC_DIR)/%.c | $(OBJ_DIR)
+$(OBJ_DIR)/%.o: %.c | $(OBJ_DIR)
 	@$(MKDIR) $(dir $@)
 	@echo "  CC      $<"
 	@$(CC) $(CFLAGS) -c $< -o $@
