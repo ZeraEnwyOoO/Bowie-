@@ -1,5 +1,4 @@
-
-/*
+ /*
  * Wingo — P2P Internet Sharing Tool (Repo: Bowie)
  * Copyright (C) 2024 ASBM Team
  *
@@ -27,7 +26,6 @@
  *
  * This header provides a cross-platform socket abstraction for UDP and TCP.
  *
- 
  * ============================================================================
  */
 
@@ -39,12 +37,15 @@
  * ============================================================================ */
 
 /*
- * Socket type.
+ * Socket kind.
+ *
+ * NOTE: Named "kind" (not "type") to avoid collision with
+ *       wingo_sock_type_t in common.h.
  */
 typedef enum {
-    WINGO_SOCK_UDP = 0,
-    WINGO_SOCK_TCP = 1,
-} wingo_sock_type_t;
+    WINGO_SOCK_KIND_UDP = 0,
+    WINGO_SOCK_KIND_TCP = 1,
+} wingo_sock_kind_t;
 
 /*
  * Socket state.
@@ -258,11 +259,11 @@ typedef struct wingo_sock wingo_sock_t;
 /*
  * Create a new socket.
  *
- * @param type      Socket type (UDP or TCP)
+ * @param kind      Socket kind (UDP or TCP)
  * @param family    Address family (IPv4, IPv6, or UNSPEC for both)
  * @return          Socket, or NULL on error
  */
-wingo_sock_t *wingo_sock_new(wingo_sock_type_t type,
+wingo_sock_t *wingo_sock_new(wingo_sock_kind_t kind,
                               wingo_addr_family_t family);
 
 /*
@@ -540,12 +541,12 @@ wingo_error_t wingo_sock_set_timeout(wingo_sock_t *sock, wingo_i64 timeout_ms);
  * ============================================================================ */
 
 /*
- * Get socket type.
+ * Get socket kind.
  *
  * @param sock      Socket
- * @return          Socket type
+ * @return          Socket kind
  */
-wingo_sock_type_t wingo_sock_type(const wingo_sock_t *sock);
+wingo_sock_kind_t wingo_sock_kind(const wingo_sock_t *sock);
 
 /*
  * Get socket state.
