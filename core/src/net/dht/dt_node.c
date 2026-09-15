@@ -664,3 +664,546 @@ wingo_error_t wingo_dht_node_get_stats(const wingo_dht_node_t *node,
 
     return WINGO_SUCCESS;
 }
+/* ============================================================================
+ * NODE COMPARISON
+ * ============================================================================ */
+
+/*
+ * Compare two nodes by ID.
+ */
+int wingo_dht_node_cmp(const wingo_dht_node_t *a, const wingo_dht_node_t *b)
+{
+    if (a == NULL && b == NULL) {
+        return 0;
+    }
+    if (a == NULL) {
+        return -1;
+    }
+    if (b == NULL) {
+        return 1;
+    }
+
+    return memcmp(a->id.bytes, b->id.bytes, WINGO_DHT_ID_SIZE);
+}
+
+/*
+ * Compare node ID with another ID.
+ */
+int wingo_dht_node_cmp_id(const wingo_dht_node_t *node,
+                           const wingo_dht_id_t *id)
+{
+    if (node == NULL && id == NULL) {
+        return 0;
+    }
+    if (node == NULL) {
+        return -1;
+    }
+    if (id == NULL) {
+        return 1;
+    }
+
+    return memcmp(node->id.bytes, id->bytes, WINGO_DHT_ID_SIZE);
+}
+
+/*
+ * Check if node has ID.
+ */
+bool wingo_dht_node_has_id(const wingo_dht_node_t *node,
+                            const wingo_dht_id_t *id)
+{
+    if (node == NULL || id == NULL) {
+        return false;
+    }
+
+    return memcmp(node->id.bytes, id->bytes, WINGO_DHT_ID_SIZE) == 0;
+}
+
+/*
+ * Check if node has address.
+ */
+bool wingo_dht_node_has_addr(const wingo_dht_node_t *node,
+                              const wingo_addr_t *addr)
+{
+    if (node == NULL || addr == NULL) {
+        return false;
+    }
+
+    if (node->addr == NULL) {
+        return false;
+    }
+
+    return wingo_addr_cmp(node->addr, addr) == 0;
+}
+
+/* ============================================================================
+ * NODE LIST — INTERNAL HELPERS
+ * ============================================================================ */
+
+/*
+ * Grow node list capacity.
+ */
+static wingo_error_t node_list_grow(wingo_dht_node_list_t *list)
+{
+    wingo_size new_cap;
+    wingo_dht_node_t **new_items;
+
+    if (list->capacity == 0) {
+        new_cap = NODE_LIST_INIT_CAPACITY;
+    } else {
+        new_cap = list->capacity * NODE_LIST_GROW_FACTOR;
+    }
+
+    /* Overflow check */
+    if (new_cap < list->capacity) {
+        return WINGO_ERR_OVERFLOW;
+    }
+
+    new_items = realloc(list->items,
+                        new_cap * sizeof(wingo_dht_node_t *));
+    if (new_items == NULL) {
+        return WINGO_ERR_NOMEM;
+    }
+
+    /* Zero new memory */
+    if (new_cap > list->capacity) {
+        memset(&new_items[list->capacity], 0,
+               (new_cap - list->capacity) * sizeof(wingo_dht_node_t *));
+    }
+
+    list->items = new_items;
+    list->capacity = new_cap;
+
+    return WINGO_SUCCESS;
+}
+
+/* ============================================================================
+ * NODE LIST — LIFECYCLE
+ * ============================================================================ */
+
+/*
+ * Create a node list.
+ *
+ * The list does NOT own its nodes by default — caller is responsible
+ * for freeing them. Set owns_nodes to true if the list should free
+ * nodes when cleared/freed.
+ */
+wingo_dht_node_list_t *wingo_dht_node_list_new(wingo_size capacity)
+{
+    wingo_dht_node_list_t *list;
+
+    if (capacity == 0) {
+        capacity = NODE_LIST_INIT_CAPACITY;
+    }
+
+    list = calloc(1, sizeof(wingo_dht_node_list_t));
+    if (list == NULL) {
+        return NULL;
+    }
+
+    list->items = calloc(capacity, sizeof(wingo_dht_node_t *));
+    if (list->items == NULL) {
+        free(list);
+        return NULL;
+    }
+
+    list->capacity = capacity;
+    list->count = 0;
+    list->owns_nodes = false;  /* Default: don't own */
+
+    return list;
+}
+
+/*
+ * Free a node list.
+ *
+ * If owns_nodes is true, frees all nodes too.
+ */
+void wingo_dht_node_list_free(wingo_dht_node_list_t *list)
+{
+    wingo_size i;
+
+    if (list == NULL) {
+        return;
+    }
+
+    /* Free nodes if we own them */
+    if (list->owns_nodes) {
+        for (i = 0; i < list->count; i++) {
+            wingo_dht_node_free(list->items[i]);
+        }
+    }
+
+    if (list->items != NULL) {
+        free(list->items);
+    }
+
+    free(list);
+}
+
+/* ============================================================================
+ * NODE LIST — OPERATIONS
+ * ============================================================================ */
+
+/*
+ * Add a node to list.
+ *
+ * If list owns nodes, ownership transfers to the list.
+ */
+wingo_error_t wingo_dht_node_list_add(wingo_dht_node_list_t *list,
+                                       wingo_dht_node_t *node)
+{
+    wingo_error_t rc;
+
+    if (list == NULL || node == NULL) {
+        return WINGO_ERR_INVALID_ARG;
+    }
+
+    /* Grow if needed */
+    if (list->count >= list->capacity) {
+        rc = node_list_grow(list);
+        if (rc != WINGO_SUCCESS) {
+            return rc;
+        }
+    }
+
+    list->items[list->count++] = node;
+
+    return WINGO_SUCCESS;
+}
+
+/*
+ * Remove a node from list by ID.
+ *
+ * If list owns nodes, the removed node is freed.
+ * Otherwise, the caller is responsible for the node.
+ */
+wingo_error_t wingo_dht_node_list_remove(wingo_dht_node_list_t *list,
+                                          const wingo_dht_id_t *id)
+{
+    wingo_size i;
+
+    if (list == NULL || id == NULL) {
+        return WINGO_ERR_INVALID_ARG;
+    }
+
+    for (i = 0; i < list->count; i++) {
+        if (wingo_dht_node_has_id(list->items[i], id)) {
+            /* Free node if we own it */
+            if (list->owns_nodes) {
+                wingo_dht_node_free(list->items[i]);
+            }
+
+            /* Shift remaining */
+            if (i < list->count - 1) {
+                memmove(&list->items[i],
+                        &list->items[i + 1],
+                        (list->count - i - 1) * sizeof(wingo_dht_node_t *));
+            }
+
+            list->count--;
+            list->items[list->count] = NULL;
+
+            return WINGO_SUCCESS;
+        }
+    }
+
+    return WINGO_ERR_NOT_FOUND;
+}
+
+/*
+ * Get node from list.
+ */
+wingo_dht_node_t *wingo_dht_node_list_get(const wingo_dht_node_list_t *list,
+                                           wingo_size index)
+{
+    if (list == NULL || index >= list->count) {
+        return NULL;
+    }
+
+    return list->items[index];
+}
+
+/*
+ * Get node count.
+ */
+wingo_size wingo_dht_node_list_count(const wingo_dht_node_list_t *list)
+{
+    if (list == NULL) {
+        return 0;
+    }
+
+    return list->count;
+}
+
+/*
+ * Find node in list.
+ */
+wingo_dht_node_t *wingo_dht_node_list_find(const wingo_dht_node_list_t *list,
+                                            const wingo_dht_id_t *id)
+{
+    wingo_size i;
+
+    if (list == NULL || id == NULL) {
+        return NULL;
+    }
+
+    for (i = 0; i < list->count; i++) {
+        if (wingo_dht_node_has_id(list->items[i], id)) {
+            return list->items[i];
+        }
+    }
+
+    return NULL;
+}
+
+/*
+ * Clear node list.
+ *
+ * If list owns nodes, frees all nodes too.
+ */
+void wingo_dht_node_list_clear(wingo_dht_node_list_t *list)
+{
+    wingo_size i;
+
+    if (list == NULL) {
+        return;
+    }
+
+    /* Free nodes if we own them */
+    if (list->owns_nodes) {
+        for (i = 0; i < list->count; i++) {
+            wingo_dht_node_free(list->items[i]);
+        }
+    }
+
+    /* Zero array */
+    if (list->items != NULL && list->count > 0) {
+        memset(list->items, 0, list->count * sizeof(wingo_dht_node_t *));
+    }
+
+    list->count = 0;
+}
+
+/* ============================================================================
+ * NODE LIST — SORTING
+ * ============================================================================ */
+
+/*
+ * Sort context for qsort.
+ */
+typedef struct {
+    const wingo_dht_id_t   *target;
+} sort_context_t;
+
+/*
+ * Thread-local sort context (qsort doesn't allow passing context).
+ */
+static sort_context_t g_sort_ctx;
+
+/*
+ * Compare two nodes by XOR distance to target.
+ */
+static int node_list_sort_cmp(const void *a, const void *b)
+{
+    const wingo_dht_node_t *na = *(const wingo_dht_node_t **)a;
+    const wingo_dht_node_t *nb = *(const wingo_dht_node_t **)b;
+    const wingo_dht_id_t *target = g_sort_ctx.target;
+    wingo_u8 da[WINGO_DHT_ID_SIZE];
+    wingo_u8 db[WINGO_DHT_ID_SIZE];
+    wingo_size i;
+
+    /* Compute XOR distances */
+    for (i = 0; i < WINGO_DHT_ID_SIZE; i++) {
+        da[i] = na->id.bytes[i] ^ target->bytes[i];
+        db[i] = nb->id.bytes[i] ^ target->bytes[i];
+    }
+
+    /* Compare */
+    return memcmp(da, db, WINGO_DHT_ID_SIZE);
+}
+
+/*
+ * Sort node list by XOR distance to target.
+ *
+ * Nodes are sorted from closest to farthest.
+ */
+wingo_error_t wingo_dht_node_list_sort(wingo_dht_node_list_t *list,
+                                        const wingo_dht_id_t *target)
+{
+    if (list == NULL || target == NULL) {
+        return WINGO_ERR_INVALID_ARG;
+    }
+
+    if (list->count < 2) {
+        return WINGO_SUCCESS;
+    }
+
+    /*
+     * NOTE: g_sort_ctx is a global. This is not thread-safe.
+     *       For Bowie, we assume single-threaded DHT operations.
+     */
+    g_sort_ctx.target = target;
+
+    qsort(list->items, list->count,
+          sizeof(wingo_dht_node_t *), node_list_sort_cmp);
+
+    return WINGO_SUCCESS;
+}
+
+/* ============================================================================
+ * NODE LIST — ITERATION
+ * ============================================================================ */
+
+/*
+ * Iterate over node list.
+ *
+ * If callback returns false, iteration stops.
+ */
+void wingo_dht_node_list_foreach(wingo_dht_node_list_t *list,
+                                  wingo_dht_node_cb_t callback,
+                                  void *userdata)
+{
+    wingo_size i;
+
+    if (list == NULL || callback == NULL) {
+        return;
+    }
+
+    for (i = 0; i < list->count; i++) {
+        if (!callback(list->items[i], userdata)) {
+            break;
+        }
+    }
+}
+
+/* ============================================================================
+ * NODE UTILITY
+ * ============================================================================ */
+
+/*
+ * Get node state name.
+ */
+const char *wingo_dht_node_state_name(wingo_dht_node_state_t state)
+{
+    switch (state) {
+    case WINGO_DHT_NODE_STATE_UNKNOWN:  return "UNKNOWN";
+    case WINGO_DHT_NODE_STATE_GOOD:     return "GOOD";
+    case WINGO_DHT_NODE_STATE_DUBIOUS:  return "DUBIOUS";
+    case WINGO_DHT_NODE_STATE_BAD:      return "BAD";
+    default:                            return "INVALID";
+    }
+}
+
+/*
+ * Convert ID to hex string (internal helper).
+ */
+static void node_id_to_hex(const wingo_dht_id_t *id, char *buf)
+{
+    static const char hex[] = "0123456789abcdef";
+    wingo_size i;
+
+    for (i = 0; i < WINGO_DHT_ID_SIZE; i++) {
+        buf[i * 2]     = hex[(id->bytes[i] >> 4) & 0x0F];
+        buf[i * 2 + 1] = hex[id->bytes[i] & 0x0F];
+    }
+    buf[WINGO_DHT_ID_SIZE * 2] = '\0';
+}
+
+/*
+ * Print node.
+ */
+void wingo_dht_node_print(const wingo_dht_node_t *node, FILE *f)
+{
+    char id_hex[WINGO_DHT_ID_HEX_SIZE];
+    char addr_str[WINGO_ADDR_STR_MAX];
+    wingo_i64 now;
+    wingo_i64 seen_age = 0;
+    wingo_i64 reply_age = 0;
+    wingo_i64 ping_age = 0;
+
+    if (f == NULL) {
+        f = stderr;
+    }
+
+    if (node == NULL) {
+        fprintf(f, "Node: (null)\n");
+        return;
+    }
+
+    node_id_to_hex(&node->id, id_hex);
+
+    if (node->addr != NULL) {
+        wingo_addr_str(node->addr, addr_str, sizeof(addr_str));
+    } else {
+        snprintf(addr_str, sizeof(addr_str), "(null)");
+    }
+
+    now = node_now();
+    if (node->last_seen > 0) {
+        seen_age = now - node->last_seen;
+    }
+    if (node->last_reply > 0) {
+        reply_age = now - node->last_reply;
+    }
+    if (node->last_pinged > 0) {
+        ping_age = now - node->last_pinged;
+    }
+
+    fprintf(f, "Node:\n");
+    fprintf(f, "  ID:         %s\n", id_hex);
+    fprintf(f, "  Address:    %s\n", addr_str);
+    fprintf(f, "  State:      %s\n",
+            wingo_dht_node_state_name(node->state));
+    fprintf(f, "  Ping count: %d\n", node->ping_count);
+    fprintf(f, "  Seen:       %llds ago\n", (long long)seen_age);
+    fprintf(f, "  Replied:    %llds ago\n", (long long)reply_age);
+    fprintf(f, "  Pinged:     %llds ago\n", (long long)ping_age);
+}
+
+/*
+ * Print node list.
+ */
+void wingo_dht_node_list_print(const wingo_dht_node_list_t *list, FILE *f)
+{
+    wingo_size i;
+    char id_hex[WINGO_DHT_ID_HEX_SIZE];
+    char addr_str[WINGO_ADDR_STR_MAX];
+
+    if (f == NULL) {
+        f = stderr;
+    }
+
+    if (list == NULL) {
+        fprintf(f, "Node list: (null)\n");
+        return;
+    }
+
+    fprintf(f, "Node list (%zu nodes):\n", list->count);
+
+    for (i = 0; i < list->count; i++) {
+        wingo_dht_node_t *node = list->items[i];
+        const char *state_name;
+
+        if (node == NULL) {
+            fprintf(f, "  [%zu] (null)\n", i);
+            continue;
+        }
+
+        node_id_to_hex(&node->id, id_hex);
+
+        if (node->addr != NULL) {
+            wingo_addr_str(node->addr, addr_str, sizeof(addr_str));
+        } else {
+            snprintf(addr_str, sizeof(addr_str), "(null)");
+        }
+
+        state_name = wingo_dht_node_state_name(node->state);
+
+        fprintf(f, "  [%zu] %s  %s  %s\n",
+                i, id_hex, addr_str, state_name);
+    }
+}
+
+/* ============================================================================
+ * END OF FILE
+ * ============================================================================ */
