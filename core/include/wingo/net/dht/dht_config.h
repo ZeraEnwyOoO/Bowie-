@@ -1,4 +1,4 @@
-/*
+ /*
  * Wingo — P2P Internet Sharing Tool (Repo: Bowie)
  * Copyright (C) 2024 ASBM Team
  *
@@ -44,8 +44,9 @@
  *   │   Storage Timeout:   32 * 60 = 1920 seconds                 │
  *   │   Token Size:        8 bytes                                │
  *   │   Token Rotate:      900-2700 seconds                       │
- *   │   Rate Limit:        Enabled                                │
- *   │   Blacklist:         Enabled                                │
+ *   │   Rate Limit:        Enabled, 100 msg/s                     │
+ *   │   Blacklist:         Enabled, 10 entries                    │
+ *   │   Debug:             Disabled                               │
  *   │                                                             │
  *   └─────────────────────────────────────────────────────────────┘
  *
@@ -54,7 +55,8 @@
 
 #include "wingo/common.h"
 #include "wingo/error.h"
-#include "wingo/net/dht.h"
+#include "wingo/net/socket.h"
+#include "wingo/net/dht/dht_types.h"
 
 /* ============================================================================
  * DHT CONFIG CONSTANTS
@@ -136,9 +138,44 @@
 #define WINGO_DHT_CONFIG_DEFAULT_RATE_LIMIT     100
 
 /*
+ * Default blacklist size.
+ */
+#define WINGO_DHT_CONFIG_DEFAULT_BLACKLIST_SIZE 10
+
+/*
+ * Default debug flag.
+ */
+#define WINGO_DHT_CONFIG_DEFAULT_DEBUG          false
+
+/*
  * Default max bootstrap nodes.
  */
 #define WINGO_DHT_CONFIG_DEFAULT_MAX_BOOTSTRAP  8
+
+/*
+ * Maximum bootstrap hostname length.
+ */
+#define WINGO_DHT_CONFIG_BOOTSTRAP_MAX_HOST     256
+
+/* ============================================================================
+ * DHT CONFIG BOOTSTRAP TYPE
+ * ============================================================================ */
+
+/*
+ * Bootstrap node entry.
+ *
+ * We use a fixed-size buffer instead of a pointer to avoid
+ * memory ownership issues.
+ *
+ * Benefits:
+ *   - No malloc/free needed
+ *   - memcpy() works correctly (deep copy)
+ *   - No dangling pointers
+ *   - No memory leaks
+ */
+typedef struct {
+    char host[WINGO_DHT_CONFIG_BOOTSTRAP_MAX_HOST];
+} wingo_dht_bootstrap_t;
 
 /* ============================================================================
  * DHT CONFIG STRUCTURE
@@ -182,13 +219,13 @@ typedef struct {
     bool                enable_ipv6;
 
     /* ------------------------------------------------------------------------
-     * Bootstrap
+     * Bootstrap (fixed-size array)
      * ------------------------------------------------------------------------ */
 
     /*
      * Bootstrap nodes.
      */
-    const char         *bootstrap[WINGO_DHT_CONFIG_DEFAULT_MAX_BOOTSTRAP];
+    wingo_dht_bootstrap_t bootstrap[WINGO_DHT_CONFIG_DEFAULT_MAX_BOOTSTRAP];
 
     /*
      * Number of bootstrap nodes.
@@ -332,6 +369,8 @@ wingo_error_t wingo_dht_config_validate(const wingo_dht_config_t *config);
 /*
  * Copy DHT configuration.
  *
+ * Performs a deep copy (bootstrap is an inline array).
+ *
  * @param dst       Destination configuration
  * @param src       Source configuration
  * @return          WINGO_SUCCESS on success, error code on failure
@@ -342,6 +381,9 @@ wingo_error_t wingo_dht_config_copy(wingo_dht_config_t *dst,
 /*
  * Set default bootstrap nodes.
  *
+ * Copies the standard BitTorrent DHT bootstrap nodes into
+ * the config's fixed-size buffer.
+ *
  * @param config    Configuration
  * @return          WINGO_SUCCESS on success, error code on failure
  */
@@ -350,6 +392,8 @@ wingo_error_t wingo_dht_config_set_default_bootstrap(
 
 /*
  * Add a bootstrap node to configuration.
+ *
+ * Copies the host string into the config's fixed-size buffer.
  *
  * @param config    Configuration
  * @param host      Bootstrap host
