@@ -533,3 +533,520 @@ wingo_error_t wingo_dht_config_add_bootstrap(wingo_dht_config_t *config,
 
     return WINGO_SUCCESS;
 }
+/* ============================================================================
+ * FILE LOAD/SAVE — HELPERS
+ * ============================================================================ */
+
+/*
+ * Get family name from family value.
+ */
+static const char *family_to_string(wingo_addr_family_t family)
+{
+    switch (family) {
+    case WINGO_ADDR_IPV4:   return "ipv4";
+    case WINGO_ADDR_IPV6:   return "ipv6";
+    case WINGO_ADDR_UNSPEC: return "unspec";
+    default:                return "unknown";
+    }
+}
+
+/*
+ * Write a string field to file.
+ */
+static void config_write_string(FILE *f, const char *key, const char *value)
+{
+    fprintf(f, "%s = %s\n", key, value != NULL ? value : "");
+}
+
+/*
+ * Write an integer field to file.
+ */
+static void config_write_i64(FILE *f, const char *key, wingo_i64 value)
+{
+    fprintf(f, "%s = %lld\n", key, (long long)value);
+}
+
+/*
+ * Write a size field to file.
+ */
+static void config_write_size(FILE *f, const char *key, wingo_size value)
+{
+    fprintf(f, "%s = %zu\n", key, value);
+}
+
+/*
+ * Write a boolean field to file.
+ */
+static void config_write_bool(FILE *f, const char *key, bool value)
+{
+    fprintf(f, "%s = %s\n", key, value ? "true" : "false");
+}
+
+/* ============================================================================
+ * PARSE LINE
+ * ============================================================================ */
+
+/*
+ * Parse a single config line.
+ *
+ * Format: key = value
+ * Comments start with '#' or ';'.
+ *
+ * Returns:
+ *   WINGO_SUCCESS    — parsed successfully (or comment/blank)
+ *   WINGO_ERR_*       — parse error
+ */
+static wingo_error_t config_parse_line(wingo_dht_config_t *config,
+                                        char *line)
+{
+    char *key;
+    char *value;
+    char *eq;
+
+    if (config == NULL || line == NULL) {
+        return WINGO_ERR_INVALID_ARG;
+    }
+
+    /* Trim */
+    key = str_trim(line);
+
+    /* Skip empty lines */
+    if (*key == '\0') {
+        return WINGO_SUCCESS;
+    }
+
+    /* Skip comments */
+    if (*key == '#' || *key == ';') {
+        return WINGO_SUCCESS;
+    }
+
+    /* Find '=' */
+    eq = strchr(key, '=');
+    if (eq == NULL) {
+        WINGO_LOG_WARN("DHT config: invalid line (no '='): %s", key);
+        return WINGO_ERR_CONFIG_SYNTAX;
+    }
+
+    *eq = '\0';
+    value = str_trim(eq + 1);
+    key = str_trim(key);
+
+    /* Parse based on key */
+    if (strcmp(key, "port") == 0) {
+        wingo_i64 v;
+        if (!parse_i64(value, &v) || v < 0 || v > 65535) {
+            WINGO_LOG_WARN("DHT config: invalid port: %s", value);
+            return WINGO_ERR_CONFIG_INVALID;
+        }
+        config->port = (wingo_u16)v;
+    }
+    else if (strcmp(key, "family") == 0) {
+        if (!parse_family(value, &config->family)) {
+            WINGO_LOG_WARN("DHT config: invalid family: %s", value);
+            return WINGO_ERR_CONFIG_INVALID;
+        }
+    }
+    else if (strcmp(key, "enable_ipv6") == 0) {
+        if (!parse_bool(value, &config->enable_ipv6)) {
+            WINGO_LOG_WARN("DHT config: invalid enable_ipv6: %s", value);
+            return WINGO_ERR_CONFIG_INVALID;
+        }
+    }
+    else if (strcmp(key, "max_nodes") == 0) {
+        if (!parse_size(value, &config->max_nodes)) {
+            WINGO_LOG_WARN("DHT config: invalid max_nodes: %s", value);
+            return WINGO_ERR_CONFIG_INVALID;
+        }
+    }
+    else if (strcmp(key, "max_peers") == 0) {
+        if (!parse_size(value, &config->max_peers)) {
+            WINGO_LOG_WARN("DHT config: invalid max_peers: %s", value);
+            return WINGO_ERR_CONFIG_INVALID;
+        }
+    }
+    else if (strcmp(key, "max_hashes") == 0) {
+        if (!parse_size(value, &config->max_hashes)) {
+            WINGO_LOG_WARN("DHT config: invalid max_hashes: %s", value);
+            return WINGO_ERR_CONFIG_INVALID;
+        }
+    }
+    else if (strcmp(key, "max_searches") == 0) {
+        if (!parse_size(value, &config->max_searches)) {
+            WINGO_LOG_WARN("DHT config: invalid max_searches: %s", value);
+            return WINGO_ERR_CONFIG_INVALID;
+        }
+    }
+    else if (strcmp(key, "bucket_size") == 0) {
+        if (!parse_size(value, &config->bucket_size)) {
+            WINGO_LOG_WARN("DHT config: invalid bucket_size: %s", value);
+            return WINGO_ERR_CONFIG_INVALID;
+        }
+    }
+    else if (strcmp(key, "search_timeout") == 0) {
+        if (!parse_i64(value, &config->search_timeout)) {
+            WINGO_LOG_WARN("DHT config: invalid search_timeout: %s", value);
+            return WINGO_ERR_CONFIG_INVALID;
+        }
+    }
+    else if (strcmp(key, "node_timeout") == 0) {
+        if (!parse_i64(value, &config->node_timeout)) {
+            WINGO_LOG_WARN("DHT config: invalid node_timeout: %s", value);
+            return WINGO_ERR_CONFIG_INVALID;
+        }
+    }
+    else if (strcmp(key, "storage_timeout") == 0) {
+        if (!parse_i64(value, &config->storage_timeout)) {
+            WINGO_LOG_WARN("DHT config: invalid storage_timeout: %s", value);
+            return WINGO_ERR_CONFIG_INVALID;
+        }
+    }
+    else if (strcmp(key, "token_size") == 0) {
+        if (!parse_size(value, &config->token_size)) {
+            WINGO_LOG_WARN("DHT config: invalid token_size: %s", value);
+            return WINGO_ERR_CONFIG_INVALID;
+        }
+    }
+    else if (strcmp(key, "token_rotate_min") == 0) {
+        if (!parse_i64(value, &config->token_rotate_min)) {
+            WINGO_LOG_WARN("DHT config: invalid token_rotate_min: %s", value);
+            return WINGO_ERR_CONFIG_INVALID;
+        }
+    }
+    else if (strcmp(key, "token_rotate_max") == 0) {
+        if (!parse_i64(value, &config->token_rotate_max)) {
+            WINGO_LOG_WARN("DHT config: invalid token_rotate_max: %s", value);
+            return WINGO_ERR_CONFIG_INVALID;
+        }
+    }
+    else if (strcmp(key, "enable_rate_limit") == 0) {
+        if (!parse_bool(value, &config->enable_rate_limit)) {
+            WINGO_LOG_WARN("DHT config: invalid enable_rate_limit: %s", value);
+            return WINGO_ERR_CONFIG_INVALID;
+        }
+    }
+    else if (strcmp(key, "rate_limit") == 0) {
+        if (!parse_size(value, &config->rate_limit)) {
+            WINGO_LOG_WARN("DHT config: invalid rate_limit: %s", value);
+            return WINGO_ERR_CONFIG_INVALID;
+        }
+    }
+    else if (strcmp(key, "enable_blacklist") == 0) {
+        if (!parse_bool(value, &config->enable_blacklist)) {
+            WINGO_LOG_WARN("DHT config: invalid enable_blacklist: %s", value);
+            return WINGO_ERR_CONFIG_INVALID;
+        }
+    }
+    else if (strcmp(key, "blacklist_size") == 0) {
+        if (!parse_size(value, &config->blacklist_size)) {
+            WINGO_LOG_WARN("DHT config: invalid blacklist_size: %s", value);
+            return WINGO_ERR_CONFIG_INVALID;
+        }
+    }
+    else if (strcmp(key, "debug") == 0) {
+        if (!parse_bool(value, &config->debug)) {
+            WINGO_LOG_WARN("DHT config: invalid debug: %s", value);
+            return WINGO_ERR_CONFIG_INVALID;
+        }
+    }
+    else if (strcmp(key, "bootstrap") == 0) {
+        /*
+         * Bootstrap node.
+         *
+         * We copy the value into the config's fixed-size buffer.
+         * No malloc, no free, no leak.
+         */
+        wingo_size host_len = strlen(value);
+
+        if (config->num_bootstrap >= WINGO_DHT_CONFIG_DEFAULT_MAX_BOOTSTRAP) {
+            WINGO_LOG_WARN("DHT config: bootstrap list full, ignoring '%s'",
+                           value);
+            return WINGO_ERR_OUT_OF_RANGE;
+        }
+
+        if (host_len == 0) {
+            WINGO_LOG_WARN("DHT config: empty bootstrap host");
+            return WINGO_ERR_CONFIG_INVALID;
+        }
+
+        if (host_len >= WINGO_DHT_CONFIG_BOOTSTRAP_MAX_HOST) {
+            WINGO_LOG_WARN("DHT config: bootstrap host too long: '%s'", value);
+            return WINGO_ERR_CONFIG_INVALID;
+        }
+
+        safe_strcpy(config->bootstrap[config->num_bootstrap].host,
+                    sizeof(config->bootstrap[0].host),
+                    value);
+        config->num_bootstrap++;
+    }
+    else {
+        WINGO_LOG_WARN("DHT config: unknown key '%s'", key);
+        return WINGO_ERR_CONFIG_UNKNOWN;
+    }
+
+    return WINGO_SUCCESS;
+}
+
+/* ============================================================================
+ * LOAD FROM FILE
+ * ============================================================================ */
+
+/*
+ * Load DHT configuration from file.
+ *
+ * The file format is simple key=value pairs, one per line.
+ * Comments start with '#' or ';'.
+ *
+ * If the file does not exist, WINGO_ERR_FILE_NOT_FOUND is returned
+ * and the config is left unchanged.
+ */
+wingo_error_t wingo_dht_config_load(wingo_dht_config_t *config,
+                                     const char *path)
+{
+    FILE *f;
+    char line[512];
+    int line_num = 0;
+    wingo_error_t rc;
+
+    if (config == NULL || path == NULL) {
+        return WINGO_ERR_INVALID_ARG;
+    }
+
+    f = fopen(path, "r");
+    if (f == NULL) {
+        if (errno == ENOENT) {
+            WINGO_LOG_DEBUG("DHT config: file '%s' not found", path);
+            return WINGO_ERR_FILE_NOT_FOUND;
+        }
+        WINGO_LOG_ERROR("DHT config: cannot open '%s': %s",
+                        path, strerror(errno));
+        return WINGO_ERR_FILE_OPEN;
+    }
+
+    WINGO_LOG_DEBUG("DHT config: loading from '%s'", path);
+
+    while (fgets(line, sizeof(line), f) != NULL) {
+        line_num++;
+
+        rc = config_parse_line(config, line);
+        if (rc != WINGO_SUCCESS) {
+            WINGO_LOG_WARN("DHT config: error on line %d: %s",
+                           line_num, wingo_error_str(rc));
+            /* Continue on parse errors — don't fail the whole load */
+        }
+    }
+
+    if (ferror(f)) {
+        WINGO_LOG_ERROR("DHT config: read error on '%s'", path);
+        fclose(f);
+        return WINGO_ERR_FILE_READ;
+    }
+
+    fclose(f);
+
+    WINGO_LOG_DEBUG("DHT config: loaded %d lines", line_num);
+
+    return WINGO_SUCCESS;
+}
+
+/* ============================================================================
+ * SAVE TO FILE
+ * ============================================================================ */
+
+/*
+ * Save DHT configuration to file.
+ */
+wingo_error_t wingo_dht_config_save(const wingo_dht_config_t *config,
+                                     const char *path)
+{
+    FILE *f;
+    wingo_size i;
+
+    if (config == NULL || path == NULL) {
+        return WINGO_ERR_INVALID_ARG;
+    }
+
+    f = fopen(path, "w");
+    if (f == NULL) {
+        WINGO_LOG_ERROR("DHT config: cannot create '%s': %s",
+                        path, strerror(errno));
+        return WINGO_ERR_FILE_OPEN;
+    }
+
+    fprintf(f, "# Bowie DHT configuration\n");
+    fprintf(f, "# Generated by wingo_dht_config_save()\n");
+    fprintf(f, "\n");
+
+    /* ----- Identity ----- */
+    fprintf(f, "# Identity\n");
+    config_write_i64(f, "port", config->port);
+    fprintf(f, "\n");
+
+    /* ----- Network ----- */
+    fprintf(f, "# Network\n");
+    config_write_string(f, "family", family_to_string(config->family));
+    config_write_bool(f, "enable_ipv6", config->enable_ipv6);
+    fprintf(f, "\n");
+
+    /* ----- Limits ----- */
+    fprintf(f, "# Limits\n");
+    config_write_size(f, "max_nodes", config->max_nodes);
+    config_write_size(f, "max_peers", config->max_peers);
+    config_write_size(f, "max_hashes", config->max_hashes);
+    config_write_size(f, "max_searches", config->max_searches);
+    config_write_size(f, "bucket_size", config->bucket_size);
+    fprintf(f, "\n");
+
+    /* ----- Timeouts ----- */
+    fprintf(f, "# Timeouts (seconds)\n");
+    config_write_i64(f, "search_timeout", config->search_timeout);
+    config_write_i64(f, "node_timeout", config->node_timeout);
+    config_write_i64(f, "storage_timeout", config->storage_timeout);
+    fprintf(f, "\n");
+
+    /* ----- Token ----- */
+    fprintf(f, "# Token\n");
+    config_write_size(f, "token_size", config->token_size);
+    config_write_i64(f, "token_rotate_min", config->token_rotate_min);
+    config_write_i64(f, "token_rotate_max", config->token_rotate_max);
+    fprintf(f, "\n");
+
+    /* ----- Security ----- */
+    fprintf(f, "# Security\n");
+    config_write_bool(f, "enable_rate_limit", config->enable_rate_limit);
+    config_write_size(f, "rate_limit", config->rate_limit);
+    config_write_bool(f, "enable_blacklist", config->enable_blacklist);
+    config_write_size(f, "blacklist_size", config->blacklist_size);
+    fprintf(f, "\n");
+
+    /* ----- Debug ----- */
+    fprintf(f, "# Debug\n");
+    config_write_bool(f, "debug", config->debug);
+    fprintf(f, "\n");
+
+    /* ----- Bootstrap ----- */
+    fprintf(f, "# Bootstrap nodes\n");
+    for (i = 0; i < config->num_bootstrap; i++) {
+        fprintf(f, "bootstrap = %s\n", config->bootstrap[i].host);
+    }
+    fprintf(f, "\n");
+
+    /* Check for write errors */
+    if (ferror(f)) {
+        WINGO_LOG_ERROR("DHT config: write error on '%s'", path);
+        fclose(f);
+        return WINGO_ERR_FILE_WRITE;
+    }
+
+    fclose(f);
+
+    WINGO_LOG_DEBUG("DHT config: saved to '%s'", path);
+
+    return WINGO_SUCCESS;
+}
+
+/* ============================================================================
+ * PRINT
+ * ============================================================================ */
+
+/*
+ * Print DHT configuration.
+ */
+void wingo_dht_config_print(const wingo_dht_config_t *config, FILE *f)
+{
+    char id_hex[WINGO_DHT_ID_HEX_SIZE];
+    wingo_size i;
+
+    if (f == NULL) {
+        f = stderr;
+    }
+
+    if (config == NULL) {
+        fprintf(f, "DHT config: (null)\n");
+        return;
+    }
+
+    /*
+     * Convert node ID to hex for display.
+     */
+    {
+        static const char hex[] = "0123456789abcdef";
+        for (i = 0; i < WINGO_DHT_ID_SIZE; i++) {
+            id_hex[i * 2]     = hex[(config->node_id.bytes[i] >> 4) & 0x0F];
+            id_hex[i * 2 + 1] = hex[config->node_id.bytes[i] & 0x0F];
+        }
+        id_hex[WINGO_DHT_ID_SIZE * 2] = '\0';
+    }
+
+    fprintf(f, "DHT Configuration:\n");
+    fprintf(f, "\n");
+
+    fprintf(f, "  Identity:\n");
+    fprintf(f, "    Node ID:            %s\n", id_hex);
+    fprintf(f, "    Port:               %u\n", config->port);
+    fprintf(f, "\n");
+
+    fprintf(f, "  Network:\n");
+    fprintf(f, "    Family:             %s\n",
+            family_to_string(config->family));
+    fprintf(f, "    IPv6 enabled:       %s\n",
+            config->enable_ipv6 ? "yes" : "no");
+    fprintf(f, "\n");
+
+    fprintf(f, "  Limits:\n");
+    fprintf(f, "    Max nodes:          %zu\n", config->max_nodes);
+    fprintf(f, "    Max peers:          %zu\n", config->max_peers);
+    fprintf(f, "    Max hashes:         %zu\n", config->max_hashes);
+    fprintf(f, "    Max searches:       %zu\n", config->max_searches);
+    fprintf(f, "    Bucket size:        %zu\n", config->bucket_size);
+    fprintf(f, "\n");
+
+    fprintf(f, "  Timeouts:\n");
+    fprintf(f, "    Search:             %llds\n",
+            (long long)config->search_timeout);
+    fprintf(f, "    Node:               %llds\n",
+            (long long)config->node_timeout);
+    fprintf(f, "    Storage:            %llds\n",
+            (long long)config->storage_timeout);
+    fprintf(f, "\n");
+
+    fprintf(f, "  Token:\n");
+    fprintf(f, "    Token size:         %zu bytes\n", config->token_size);
+    fprintf(f, "    Rotate min:         %llds\n",
+            (long long)config->token_rotate_min);
+    fprintf(f, "    Rotate max:         %llds\n",
+            (long long)config->token_rotate_max);
+    fprintf(f, "\n");
+
+    fprintf(f, "  Security:\n");
+    fprintf(f, "    Rate limit:         %s\n",
+            config->enable_rate_limit ? "yes" : "no");
+    if (config->enable_rate_limit) {
+        fprintf(f, "      Rate:             %zu msg/s\n", config->rate_limit);
+    }
+    fprintf(f, "    Blacklist:          %s\n",
+            config->enable_blacklist ? "yes" : "no");
+    if (config->enable_blacklist) {
+        fprintf(f, "      Size:             %zu entries\n",
+                config->blacklist_size);
+    }
+    fprintf(f, "\n");
+
+    fprintf(f, "  Debug:\n");
+    fprintf(f, "    Debug:              %s\n",
+            config->debug ? "yes" : "no");
+    fprintf(f, "\n");
+
+    fprintf(f, "  Bootstrap:\n");
+    if (config->num_bootstrap == 0) {
+        fprintf(f, "    (none)\n");
+    } else {
+        for (i = 0; i < config->num_bootstrap; i++) {
+            fprintf(f, "    [%zu] %s\n", i, config->bootstrap[i].host);
+        }
+    }
+    fprintf(f, "\n");
+}
+
+/* ============================================================================
+ * END OF FILE
+ * ============================================================================ */
