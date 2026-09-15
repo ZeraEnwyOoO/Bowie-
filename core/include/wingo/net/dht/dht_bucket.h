@@ -1,4 +1,4 @@
-/*
+ /*
  * Wingo — P2P Internet Sharing Tool (Repo: Bowie)
  * Copyright (C) 2024 ASBM Team
  *
@@ -45,16 +45,17 @@
  *   │   │  Last Changed Time                                  │   │
  *   │   └─────────────────────────────────────────────────────┘   │
  *   │                                                             │
-│   │   Bucket Range: [first, next->first)                        │
-│   │                                                             │
-│   └─────────────────────────────────────────────────────────────┘
+ *   │   Bucket Range: [first, next->first)                        │
+ *   │                                                             │
+ *   └─────────────────────────────────────────────────────────────┘
  *
  * ============================================================================
  */
 
 #include "wingo/common.h"
 #include "wingo/error.h"
-#include "wingo/net/dht.h"
+#include "wingo/net/dht/dht_types.h"
+#include "wingo/net/dht/dht_node.h"
 
 /* ============================================================================
  * BUCKET CONSTANTS
@@ -71,20 +72,14 @@
 #define WINGO_DHT_BUCKET_MIN_SIZE       4
 
 /* ============================================================================
- * NODE FORWARD DECLARATION
- * ============================================================================ */
-
-/*
- * DHT node (defined in dht_node.h).
- */
-typedef struct wingo_dht_node wingo_dht_node_t;
-
-/* ============================================================================
  * BUCKET STRUCTURE (OPAQUE)
  * ============================================================================ */
 
 /*
  * DHT bucket handle.
+ *
+ * NOTE: This is the ONLY definition of this opaque type in Bowie.
+ *       Do NOT redefine it in dht_routing.h.
  */
 typedef struct wingo_dht_bucket wingo_dht_bucket_t;
 
