@@ -1,4 +1,4 @@
-/*
+ /*
  * Wingo — P2P Internet Sharing Tool (Repo: Bowie)
  * Copyright (C) 2024 ASBM Team
  *
@@ -39,13 +39,13 @@
  *   │   │  Ping Count                                         │   │
  *   │   └─────────────────────────────────────────────────────┘   │
  *   │                                                             │
-│   │   Node Lifecycle:                                           │
-│   │   ├── Created                                               │
-│   │   ├── Pinged                                                │
-│   │   ├── Replied                                               │
-│   │   └── Expired                                               │
-│   │                                                             │
-│   └─────────────────────────────────────────────────────────────┘
+ *   │   Node Lifecycle:                                           │
+ *   │   ├── Created                                               │
+ *   │   ├── Pinged                                                │
+ *   │   ├── Replied                                               │
+ *   │   └── Expired                                               │
+ *   │                                                             │
+ *   └─────────────────────────────────────────────────────────────┘
  *
  * ============================================================================
  */
@@ -53,14 +53,36 @@
 #include "wingo/common.h"
 #include "wingo/error.h"
 #include "wingo/net/socket.h"
-#include "wingo/net/dht.h"
+#include "wingo/net/dht/dht_types.h"
 
 /* ============================================================================
  * DHT NODE CONSTANTS
  * ============================================================================ */
 
 /*
+ * Maximum ping count before node is considered bad.
+ */
+#define WINGO_DHT_NODE_MAX_PING         3
+
+/*
+ * Node good timeout (30 minutes).
+ */
+#define WINGO_DHT_NODE_GOOD_TIMEOUT     (30 * 60)
+
+/*
+ * Node dubious timeout (15 minutes).
+ */
+#define WINGO_DHT_NODE_DUBIOUS_TIMEOUT  (15 * 60)
+
+/* ============================================================================
+ * DHT NODE TYPES
+ * ============================================================================ */
+
+/*
  * Node state.
+ *
+ * NOTE: This is the ONLY definition of this enum in Bowie.
+ *       Do NOT redefine it in dht_routing.h.
  */
 typedef enum {
     WINGO_DHT_NODE_STATE_UNKNOWN  = 0,   /* Unknown state */
@@ -70,32 +92,13 @@ typedef enum {
 } wingo_dht_node_state_t;
 
 /*
- * Maximum ping count before node is considered bad.
- */
-#define WINGO_DHT_NODE_MAX_PING     3
-
-/*
- * Node good timeout (30 minutes).
- */
-#define WINGO_DHT_NODE_GOOD_TIMEOUT (30 * 60)
-
-/*
- * Node dubious timeout (15 minutes).
- */
-#define WINGO_DHT_NODE_DUBIOUS_TIMEOUT (15 * 60)
-
-/* ============================================================================
- * DHT NODE INFO STRUCTURE
- * ============================================================================ */
-
-/*
  * Node info (ID + address).
  *
- * This is used for message parsing and passing node data.
+ * NOTE: addr is a pointer because wingo_addr_t is opaque.
  */
 typedef struct {
     wingo_dht_id_t  id;         /* Node ID */
-    wingo_addr_t    addr;       /* Node address */
+    wingo_addr_t   *addr;       /* Node address (owned by caller) */
 } wingo_dht_node_info_t;
 
 /* ============================================================================
@@ -104,8 +107,20 @@ typedef struct {
 
 /*
  * DHT node handle.
+ *
+ * NOTE: This is the ONLY definition of this opaque type in Bowie.
+ *       Do NOT redefine it in dht_bucket.h or dht_routing.h.
  */
 typedef struct wingo_dht_node wingo_dht_node_t;
+
+/* ============================================================================
+ * DHT NODE LIST STRUCTURE (OPAQUE)
+ * ============================================================================ */
+
+/*
+ * DHT node list handle.
+ */
+typedef struct wingo_dht_node_list wingo_dht_node_list_t;
 
 /* ============================================================================
  * NODE LIFECYCLE
@@ -557,15 +572,6 @@ void wingo_dht_node_print(const wingo_dht_node_t *node, FILE *f);
  * @param f         Output file (NULL = stderr)
  */
 void wingo_dht_node_list_print(const wingo_dht_node_list_t *list, FILE *f);
-
-/* ============================================================================
- * NODE LIST STRUCTURE (OPAQUE)
- * ============================================================================ */
-
-/*
- * DHT node list handle.
- */
-typedef struct wingo_dht_node_list wingo_dht_node_list_t;
 
 /* ============================================================================
  * END OF HEADER
