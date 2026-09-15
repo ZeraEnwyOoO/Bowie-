@@ -1,4 +1,4 @@
-/*
+ /*
  * Wingo — P2P Internet Sharing Tool (Repo: Bowie)
  * Copyright (C) 2024 ASBM Team
  *
@@ -122,6 +122,7 @@ static wingo_error_t errno_to_error(int err)
     case EBADF:         return WINGO_ERR_INVALID_ARG;
     case ENOTCONN:      return WINGO_ERR_NET_NOT_CONN;
     case EISCONN:       return WINGO_ERR_NET_ALREADY_CONN;
+    case EOPNOTSUPP:    return WINGO_ERR_NOT_SUPPORTED;
     default:            return WINGO_ERR_NET;
     }
 }
@@ -318,6 +319,42 @@ static wingo_error_t sock_set_cloexec(int fd)
 
     if (fcntl(fd, F_SETFD, flags | FD_CLOEXEC) < 0) {
         return errno_to_error(errno);
+    }
+
+    return WINGO_SUCCESS;
+}
+
+/*
+ * Wait for a socket to be readable/writable.
+ *
+ * @param fd        File descriptor
+ * @param events    POLLIN, POLLOUT, etc.
+ * @param timeout_ms Timeout in ms (-1 = infinite)
+ * @return          WINGO_SUCCESS on success,
+ *                  WINGO_ERR_TIMEOUT on timeout,
+ *                  error code on failure
+ */
+static wingo_error_t sock_wait(int fd, short events, wingo_i64 timeout_ms)
+{
+    struct pollfd pfd;
+    int rc;
+
+    pfd.fd = fd;
+    pfd.events = events;
+    pfd.revents = 0;
+
+    rc = poll(&pfd, 1, (int)timeout_ms);
+
+    if (rc < 0) {
+        return errno_to_error(errno);
+    }
+
+    if (rc == 0) {
+        return WINGO_ERR_TIMEOUT;
+    }
+
+    if (pfd.revents & (POLLERR | POLLNVAL)) {
+        return WINGO_ERR_NET;
     }
 
     return WINGO_SUCCESS;
@@ -645,11 +682,13 @@ bool wingo_addr_is_ipv6(const wingo_addr_t *addr)
  */
 bool wingo_addr_is_ipv4_mapped(const wingo_addr_t *addr)
 {
+    struct sockaddr_in6 *sin6;
+
     if (addr == NULL || addr->ss.ss_family != AF_INET6) {
         return false;
     }
 
-    struct sockaddr_in6 *sin6 = (struct sockaddr_in6 *)&addr->ss;
+    sin6 = (struct sockaddr_in6 *)&addr->ss;
     return IN6_IS_ADDR_V4MAPPED(&sin6->sin6_addr);
 }
 
@@ -748,3 +787,1154 @@ bool wingo_addr_is_martian(const wingo_addr_t *addr)
 
     return true;
 }
+
+/* ============================================================================
+ * SOCKET CREATION
+ * ============================================================================ */
+
+/*
+ * Create a new socket.
+ */
+wingo_sock_t *wingo_sock_new(wingo_sock_kind_t kind,
+                              wingo_addr_family_t family)
+{
+    wingo_sock_t *sock;
+    int posix_kind;
+    int posix_family;
+    int fd;
+    wingo_error_t rc;
+
+    if (!sock_kind_valid(kind)) {
+        return NULL;
+    }
+
+    posix_kind = sock_kind_to_posix(kind);
+    if (posix_kind < 0) {
+        return NULL;
+    }
+
+    posix_family = addr_family_to_posix(family);
+
+    /*
+     * For UNSPEC, default to IPv4 (Bowie prefers IPv4).
+     */
+    if (posix_family == AF_UNSPEC) {
+        posix_family = AF_INET;
+    }
+
+    fd = socket(posix_family, posix_kind, 0);
+    if (fd < 0) {
+        WINGO_LOG_DEBUG("socket() failed: %s", strerror(errno));
+        return NULL;
+    }
+
+    /* Set close-on-exec */
+    rc = sock_set_cloexec(fd);
+    if (rc != WINGO_SUCCESS) {
+        close(fd);
+        return NULL;
+    }
+
+    sock = calloc(1, sizeof(wingo_sock_t));
+    if (sock == NULL) {
+        close(fd);
+        return NULL;
+    }
+
+    sock->fd = fd;
+    sock->kind = kind;
+    sock->state = WINGO_SOCK_STATE_OPEN;
+    sock->local = NULL;
+    sock->remote = NULL;
+    sock->last_error = WINGO_SUCCESS;
+    sock->blocking = true;
+    sock->timeout_ms = 0;
+
+    return sock;
+}
+
+/*
+ * Create a UDP socket.
+ */
+wingo_sock_t *wingo_sock_new_udp(wingo_addr_family_t family)
+{
+    return wingo_sock_new(WINGO_SOCK_KIND_UDP, family);
+}
+
+/*
+ * Create a TCP socket.
+ */
+wingo_sock_t *wingo_sock_new_tcp(wingo_addr_family_t family)
+{
+    return wingo_sock_new(WINGO_SOCK_KIND_TCP, family);
+}
+
+/*
+ * Close a socket.
+ *
+ * This closes the fd but does NOT free the struct.
+ * Use wingo_sock_free() to free the struct.
+ */
+void wingo_sock_close(wingo_sock_t *sock)
+{
+    if (sock == NULL) {
+        return;
+    }
+
+    if (sock->fd >= 0) {
+        close(sock->fd);
+        sock->fd = -1;
+    }
+
+    if (sock->local != NULL) {
+        wingo_addr_free(sock->local);
+        sock->local = NULL;
+    }
+
+    if (sock->remote != NULL) {
+        wingo_addr_free(sock->remote);
+        sock->remote = NULL;
+    }
+
+    sock->state = WINGO_SOCK_STATE_CLOSED;
+}
+
+/*
+ * Free a socket.
+ */
+void wingo_sock_free(wingo_sock_t *sock)
+{
+    if (sock == NULL) {
+        return;
+    }
+
+    wingo_sock_close(sock);
+    free(sock);
+}
+
+/* ============================================================================
+ * SOCKET BIND
+ * ============================================================================ */
+
+/*
+ * Bind socket to an address.
+ */
+wingo_error_t wingo_sock_bind(wingo_sock_t *sock, const wingo_addr_t *addr)
+{
+    int rc;
+
+    if (sock == NULL || sock->fd < 0) {
+        return WINGO_ERR_INVALID_ARG;
+    }
+
+    if (sock->state != WINGO_SOCK_STATE_OPEN) {
+        return WINGO_ERR_INVALID_STATE;
+    }
+
+    if (addr == NULL) {
+        return WINGO_ERR_INVALID_ARG;
+    }
+
+    rc = bind(sock->fd,
+              (const struct sockaddr *)&addr->ss,
+              addr->ss_len);
+
+    if (rc < 0) {
+        sock->last_error = errno_to_error(errno);
+        WINGO_LOG_DEBUG("bind() failed: %s", strerror(errno));
+        return sock->last_error;
+    }
+
+    /* Save local address */
+    sock->local = wingo_addr_copy(addr);
+    sock->state = WINGO_SOCK_STATE_BOUND;
+
+    return WINGO_SUCCESS;
+}
+
+/*
+ * Bind socket to a port.
+ */
+wingo_error_t wingo_sock_bind_port(wingo_sock_t *sock,
+                                    wingo_u16 port,
+                                    wingo_addr_family_t family)
+{
+    wingo_addr_t *addr;
+    wingo_error_t rc;
+
+    if (sock == NULL) {
+        return WINGO_ERR_INVALID_ARG;
+    }
+
+    if (family == WINGO_ADDR_IPV6) {
+        addr = wingo_addr_new_ipv6("::", port);
+    } else {
+        addr = wingo_addr_new_ipv4("0.0.0.0", port);
+    }
+
+    if (addr == NULL) {
+        return WINGO_ERR_INVALID_ARG;
+    }
+
+    rc = wingo_sock_bind(sock, addr);
+    wingo_addr_free(addr);
+
+    return rc;
+}
+
+/*
+ * Bind socket to any address.
+ */
+wingo_error_t wingo_sock_bind_any(wingo_sock_t *sock, wingo_u16 port)
+{
+    return wingo_sock_bind_port(sock, port, WINGO_ADDR_IPV4);
+}
+
+/* ============================================================================
+ * SOCKET CONNECT
+ * ============================================================================ */
+
+/*
+ * Connect socket to an address (TCP).
+ *
+ * For UDP, this sets the default destination.
+ */
+wingo_error_t wingo_sock_connect(wingo_sock_t *sock, const wingo_addr_t *addr)
+{
+    int rc;
+
+    if (sock == NULL || sock->fd < 0 || addr == NULL) {
+        return WINGO_ERR_INVALID_ARG;
+    }
+
+    if (sock->state != WINGO_SOCK_STATE_OPEN &&
+        sock->state != WINGO_SOCK_STATE_BOUND) {
+        return WINGO_ERR_INVALID_STATE;
+    }
+
+    rc = connect(sock->fd,
+                 (const struct sockaddr *)&addr->ss,
+                 addr->ss_len);
+
+    if (rc < 0) {
+        sock->last_error = errno_to_error(errno);
+        WINGO_LOG_DEBUG("connect() failed: %s", strerror(errno));
+        return sock->last_error;
+    }
+
+    /* Save remote address */
+    if (sock->remote != NULL) {
+        wingo_addr_free(sock->remote);
+    }
+    sock->remote = wingo_addr_copy(addr);
+    sock->state = WINGO_SOCK_STATE_CONNECT;
+
+    return WINGO_SUCCESS;
+}
+
+/*
+ * Connect socket with timeout (TCP).
+ *
+ * This uses non-blocking connect + poll.
+ */
+wingo_error_t wingo_sock_connect_timeout(wingo_sock_t *sock,
+                                          const wingo_addr_t *addr,
+                                          wingo_i64 timeout_ms)
+{
+    wingo_error_t rc;
+    int err;
+    socklen_t err_len;
+    bool was_blocking;
+
+    if (sock == NULL || sock->fd < 0 || addr == NULL) {
+        return WINGO_ERR_INVALID_ARG;
+    }
+
+    if (sock->kind != WINGO_SOCK_KIND_TCP) {
+        /* For UDP, timeout connect doesn't make sense */
+        return wingo_sock_connect(sock, addr);
+    }
+
+    was_blocking = sock->blocking;
+
+    /* Set non-blocking */
+    rc = sock_set_nonblocking(sock->fd, true);
+    if (rc != WINGO_SUCCESS) {
+        return rc;
+    }
+
+    /* Try connect */
+    rc = connect(sock->fd,
+                 (const struct sockaddr *)&addr->ss,
+                 addr->ss_len);
+
+    if (rc < 0) {
+        if (errno != EINPROGRESS) {
+            sock->last_error = errno_to_error(errno);
+            if (was_blocking) {
+                sock_set_nonblocking(sock->fd, false);
+            }
+            return sock->last_error;
+        }
+
+        /* Wait for connect to complete */
+        rc = sock_wait(sock->fd, POLLOUT, timeout_ms);
+        if (rc != WINGO_SUCCESS) {
+            if (was_blocking) {
+                sock_set_nonblocking(sock->fd, false);
+            }
+            return rc;
+        }
+
+        /* Check connect result */
+        err = 0;
+        err_len = sizeof(err);
+        if (getsockopt(sock->fd, SOL_SOCKET, SO_ERROR, &err, &err_len) < 0) {
+            if (was_blocking) {
+                sock_set_nonblocking(sock->fd, false);
+            }
+            return errno_to_error(errno);
+        }
+
+        if (err != 0) {
+            if (was_blocking) {
+                sock_set_nonblocking(sock->fd, false);
+            }
+            return errno_to_error(err);
+        }
+    }
+
+    /* Restore blocking mode */
+    if (was_blocking) {
+        sock_set_nonblocking(sock->fd, false);
+    }
+
+    /* Save remote address */
+    if (sock->remote != NULL) {
+        wingo_addr_free(sock->remote);
+    }
+    sock->remote = wingo_addr_copy(addr);
+    sock->state = WINGO_SOCK_STATE_CONNECT;
+
+    return WINGO_SUCCESS;
+}
+
+/*
+ * Disconnect socket.
+ */
+wingo_error_t wingo_sock_disconnect(wingo_sock_t *sock)
+{
+    if (sock == NULL || sock->fd < 0) {
+        return WINGO_ERR_INVALID_ARG;
+    }
+
+    if (sock->state != WINGO_SOCK_STATE_CONNECT) {
+        return WINGO_ERR_INVALID_STATE;
+    }
+
+    if (sock->remote != NULL) {
+        wingo_addr_free(sock->remote);
+        sock->remote = NULL;
+    }
+
+    sock->state = WINGO_SOCK_STATE_OPEN;
+
+    return WINGO_SUCCESS;
+}
+/* ============================================================================
+ * SOCKET LISTEN (TCP)
+ * ============================================================================ */
+
+/*
+ * Listen for incoming connections (TCP).
+ */
+wingo_error_t wingo_sock_listen(wingo_sock_t *sock, int backlog)
+{
+    int rc;
+
+    if (sock == NULL || sock->fd < 0) {
+        return WINGO_ERR_INVALID_ARG;
+    }
+
+    if (sock->kind != WINGO_SOCK_KIND_TCP) {
+        return WINGO_ERR_NOT_SUPPORTED;
+    }
+
+    if (sock->state != WINGO_SOCK_STATE_BOUND) {
+        return WINGO_ERR_INVALID_STATE;
+    }
+
+    if (backlog <= 0) {
+        backlog = SOMAXCONN;
+    }
+
+    rc = listen(sock->fd, backlog);
+    if (rc < 0) {
+        sock->last_error = errno_to_error(errno);
+        WINGO_LOG_DEBUG("listen() failed: %s", strerror(errno));
+        return sock->last_error;
+    }
+
+    sock->state = WINGO_SOCK_STATE_LISTEN;
+
+    return WINGO_SUCCESS;
+}
+
+/*
+ * Accept an incoming connection (TCP).
+ *
+ * If addr is non-NULL, the remote address is stored there.
+ * The caller owns the returned socket and must free it
+ * with wingo_sock_free().
+ */
+wingo_sock_t *wingo_sock_accept(wingo_sock_t *sock, wingo_addr_t **addr)
+{
+    wingo_sock_t *client;
+    struct sockaddr_storage ss;
+    socklen_t ss_len;
+    int fd;
+    int rc;
+
+    if (sock == NULL || sock->fd < 0) {
+        return NULL;
+    }
+
+    if (sock->kind != WINGO_SOCK_KIND_TCP) {
+        return NULL;
+    }
+
+    if (sock->state != WINGO_SOCK_STATE_LISTEN) {
+        return NULL;
+    }
+
+    memset(&ss, 0, sizeof(ss));
+    ss_len = sizeof(ss);
+
+    fd = accept(sock->fd, (struct sockaddr *)&ss, &ss_len);
+    if (fd < 0) {
+        sock->last_error = errno_to_error(errno);
+
+        if (errno != EAGAIN && errno != EWOULDBLOCK) {
+            WINGO_LOG_DEBUG("accept() failed: %s", strerror(errno));
+        }
+
+        return NULL;
+    }
+
+    /* Set close-on-exec */
+    rc = sock_set_cloexec(fd);
+    if (rc != WINGO_SUCCESS) {
+        close(fd);
+        return NULL;
+    }
+
+    /* Allocate socket struct */
+    client = calloc(1, sizeof(wingo_sock_t));
+    if (client == NULL) {
+        close(fd);
+        return NULL;
+    }
+
+    client->fd = fd;
+    client->kind = WINGO_SOCK_KIND_TCP;
+    client->state = WINGO_SOCK_STATE_CONNECT;
+    client->local = NULL;
+    client->remote = NULL;
+    client->last_error = WINGO_SUCCESS;
+    client->blocking = sock->blocking;
+    client->timeout_ms = sock->timeout_ms;
+
+    /* Non-blocking if parent is non-blocking */
+    if (!sock->blocking) {
+        sock_set_nonblocking(fd, true);
+    }
+
+    /* Save remote address */
+    if (addr != NULL) {
+        *addr = calloc(1, sizeof(wingo_addr_t));
+        if (*addr != NULL) {
+            memcpy(&(*addr)->ss, &ss, ss_len);
+            (*addr)->ss_len = ss_len;
+            (*addr)->ip_str_valid = false;
+        }
+    }
+
+    /* Save remote address in client too */
+    client->remote = calloc(1, sizeof(wingo_addr_t));
+    if (client->remote != NULL) {
+        memcpy(&client->remote->ss, &ss, ss_len);
+        client->remote->ss_len = ss_len;
+        client->remote->ip_str_valid = false;
+    }
+
+    return client;
+}
+
+/* ============================================================================
+ * SOCKET SEND
+ * ============================================================================ */
+
+/*
+ * Send data over socket.
+ *
+ * For TCP: sends data on connected socket.
+ * For UDP: sends to connected address.
+ *
+ * Returns number of bytes sent, or -1 on error.
+ */
+wingo_ssize wingo_sock_send(wingo_sock_t *sock,
+                             const void *data,
+                             wingo_size len)
+{
+    ssize_t n;
+
+    if (sock == NULL || sock->fd < 0 || data == NULL) {
+        return -1;
+    }
+
+    if (sock->state != WINGO_SOCK_STATE_CONNECT &&
+        sock->state != WINGO_SOCK_STATE_OPEN) {
+        return -1;
+    }
+
+    n = send(sock->fd, data, len, 0);
+    if (n < 0) {
+        sock->last_error = errno_to_error(errno);
+        return -1;
+    }
+
+    return (wingo_ssize)n;
+}
+
+/*
+ * Send data to address (UDP).
+ *
+ * Returns number of bytes sent, or -1 on error.
+ */
+wingo_ssize wingo_sock_sendto(wingo_sock_t *sock,
+                               const void *data,
+                               wingo_size len,
+                               const wingo_addr_t *addr)
+{
+    ssize_t n;
+
+    if (sock == NULL || sock->fd < 0 || data == NULL || addr == NULL) {
+        return -1;
+    }
+
+    if (sock->kind != WINGO_SOCK_KIND_UDP) {
+        return -1;
+    }
+
+    n = sendto(sock->fd,
+               data, len, 0,
+               (const struct sockaddr *)&addr->ss,
+               addr->ss_len);
+
+    if (n < 0) {
+        sock->last_error = errno_to_error(errno);
+        return -1;
+    }
+
+    return (wingo_ssize)n;
+}
+
+/*
+ * Send all data over socket.
+ *
+ * This loops until all data is sent.
+ * For non-blocking sockets, this uses poll() to wait.
+ */
+wingo_error_t wingo_sock_sendall(wingo_sock_t *sock,
+                                  const void *data,
+                                  wingo_size len)
+{
+    const wingo_u8 *ptr = (const wingo_u8 *)data;
+    wingo_size remaining = len;
+    ssize_t n;
+
+    if (sock == NULL || sock->fd < 0 || data == NULL) {
+        return WINGO_ERR_INVALID_ARG;
+    }
+
+    if (len == 0) {
+        return WINGO_SUCCESS;
+    }
+
+    while (remaining > 0) {
+        n = send(sock->fd, ptr, remaining, 0);
+
+        if (n < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                /* Wait for writable */
+                wingo_error_t rc;
+
+                if (sock->timeout_ms > 0) {
+                    rc = sock_wait(sock->fd, POLLOUT, sock->timeout_ms);
+                } else {
+                    rc = sock_wait(sock->fd, POLLOUT, -1);
+                }
+
+                if (rc != WINGO_SUCCESS) {
+                    sock->last_error = rc;
+                    return rc;
+                }
+
+                continue;
+            }
+
+            sock->last_error = errno_to_error(errno);
+            return sock->last_error;
+        }
+
+        if (n == 0) {
+            break;
+        }
+
+        ptr += n;
+        remaining -= (wingo_size)n;
+    }
+
+    return WINGO_SUCCESS;
+}
+
+/* ============================================================================
+ * SOCKET RECEIVE
+ * ============================================================================ */
+
+/*
+ * Receive data from socket.
+ *
+ * Returns number of bytes received, 0 on close, -1 on error.
+ */
+wingo_ssize wingo_sock_recv(wingo_sock_t *sock, void *buf, wingo_size len)
+{
+    ssize_t n;
+
+    if (sock == NULL || sock->fd < 0 || buf == NULL) {
+        return -1;
+    }
+
+    n = recv(sock->fd, buf, len, 0);
+    if (n < 0) {
+        sock->last_error = errno_to_error(errno);
+        return -1;
+    }
+
+    return (wingo_ssize)n;
+}
+
+/*
+ * Receive data from address (UDP).
+ *
+ * If addr is non-NULL, the source address is stored there.
+ * The caller owns the returned address and must free it.
+ */
+wingo_ssize wingo_sock_recvfrom(wingo_sock_t *sock,
+                                 void *buf,
+                                 wingo_size len,
+                                 wingo_addr_t **addr)
+{
+    struct sockaddr_storage ss;
+    socklen_t ss_len;
+    ssize_t n;
+
+    if (sock == NULL || sock->fd < 0 || buf == NULL) {
+        return -1;
+    }
+
+    memset(&ss, 0, sizeof(ss));
+    ss_len = sizeof(ss);
+
+    n = recvfrom(sock->fd, buf, len, 0,
+                 (struct sockaddr *)&ss, &ss_len);
+
+    if (n < 0) {
+        sock->last_error = errno_to_error(errno);
+        return -1;
+    }
+
+    /* Save source address */
+    if (addr != NULL) {
+        *addr = calloc(1, sizeof(wingo_addr_t));
+        if (*addr != NULL) {
+            memcpy(&(*addr)->ss, &ss, ss_len);
+            (*addr)->ss_len = ss_len;
+            (*addr)->ip_str_valid = false;
+        }
+    }
+
+    return (wingo_ssize)n;
+}
+
+/*
+ * Receive data with timeout.
+ *
+ * Returns:
+ *   > 0  — number of bytes received
+ *   0    — timeout
+ *   -1   — error
+ */
+wingo_ssize wingo_sock_recv_timeout(wingo_sock_t *sock,
+                                     void *buf,
+                                     wingo_size len,
+                                     wingo_i64 timeout_ms)
+{
+    wingo_error_t rc;
+    ssize_t n;
+
+    if (sock == NULL || sock->fd < 0 || buf == NULL) {
+        return -1;
+    }
+
+    /* Wait for readable */
+    rc = sock_wait(sock->fd, POLLIN, timeout_ms);
+    if (rc == WINGO_ERR_TIMEOUT) {
+        return 0;
+    }
+    if (rc != WINGO_SUCCESS) {
+        sock->last_error = rc;
+        return -1;
+    }
+
+    n = recv(sock->fd, buf, len, 0);
+    if (n < 0) {
+        sock->last_error = errno_to_error(errno);
+        return -1;
+    }
+
+    return (wingo_ssize)n;
+}
+
+/* ============================================================================
+ * SOCKET OPTIONS
+ * ============================================================================ */
+
+/*
+ * Set socket blocking mode.
+ */
+wingo_error_t wingo_sock_set_blocking(wingo_sock_t *sock, bool blocking)
+{
+    wingo_error_t rc;
+
+    if (sock == NULL || sock->fd < 0) {
+        return WINGO_ERR_INVALID_ARG;
+    }
+
+    rc = sock_set_nonblocking(sock->fd, !blocking);
+    if (rc != WINGO_SUCCESS) {
+        return rc;
+    }
+
+    sock->blocking = blocking;
+
+    return WINGO_SUCCESS;
+}
+
+/*
+ * Set socket reuse address.
+ */
+wingo_error_t wingo_sock_set_reuseaddr(wingo_sock_t *sock, bool reuse)
+{
+    int opt = reuse ? 1 : 0;
+
+    if (sock == NULL || sock->fd < 0) {
+        return WINGO_ERR_INVALID_ARG;
+    }
+
+    if (setsockopt(sock->fd, SOL_SOCKET, SO_REUSEADDR,
+                   &opt, sizeof(opt)) < 0) {
+        sock->last_error = errno_to_error(errno);
+        return sock->last_error;
+    }
+
+    return WINGO_SUCCESS;
+}
+
+/*
+ * Set socket reuse port.
+ */
+wingo_error_t wingo_sock_set_reuseport(wingo_sock_t *sock, bool reuse)
+{
+#ifdef SO_REUSEPORT
+    int opt = reuse ? 1 : 0;
+
+    if (sock == NULL || sock->fd < 0) {
+        return WINGO_ERR_INVALID_ARG;
+    }
+
+    if (setsockopt(sock->fd, SOL_SOCKET, SO_REUSEPORT,
+                   &opt, sizeof(opt)) < 0) {
+        sock->last_error = errno_to_error(errno);
+        return sock->last_error;
+    }
+
+    return WINGO_SUCCESS;
+#else
+    WINGO_UNUSED(sock);
+    WINGO_UNUSED(reuse);
+    return WINGO_ERR_NOT_SUPPORTED;
+#endif
+}
+
+/*
+ * Set socket keepalive.
+ */
+wingo_error_t wingo_sock_set_keepalive(wingo_sock_t *sock, bool keepalive)
+{
+    int opt = keepalive ? 1 : 0;
+
+    if (sock == NULL || sock->fd < 0) {
+        return WINGO_ERR_INVALID_ARG;
+    }
+
+    if (setsockopt(sock->fd, SOL_SOCKET, SO_KEEPALIVE,
+                   &opt, sizeof(opt)) < 0) {
+        sock->last_error = errno_to_error(errno);
+        return sock->last_error;
+    }
+
+    return WINGO_SUCCESS;
+}
+
+/*
+ * Set socket send buffer size.
+ */
+wingo_error_t wingo_sock_set_sndbuf(wingo_sock_t *sock, int size)
+{
+    if (sock == NULL || sock->fd < 0 || size < 0) {
+        return WINGO_ERR_INVALID_ARG;
+    }
+
+    if (setsockopt(sock->fd, SOL_SOCKET, SO_SNDBUF,
+                   &size, sizeof(size)) < 0) {
+        sock->last_error = errno_to_error(errno);
+        return sock->last_error;
+    }
+
+    return WINGO_SUCCESS;
+}
+
+/*
+ * Set socket receive buffer size.
+ */
+wingo_error_t wingo_sock_set_rcvbuf(wingo_sock_t *sock, int size)
+{
+    if (sock == NULL || sock->fd < 0 || size < 0) {
+        return WINGO_ERR_INVALID_ARG;
+    }
+
+    if (setsockopt(sock->fd, SOL_SOCKET, SO_RCVBUF,
+                   &size, sizeof(size)) < 0) {
+        sock->last_error = errno_to_error(errno);
+        return sock->last_error;
+    }
+
+    return WINGO_SUCCESS;
+}
+
+/*
+ * Set socket timeout.
+ *
+ * This applies to send/recv operations.
+ * A timeout of 0 means no timeout (blocking forever).
+ */
+wingo_error_t wingo_sock_set_timeout(wingo_sock_t *sock, wingo_i64 timeout_ms)
+{
+    struct timeval tv;
+
+    if (sock == NULL || sock->fd < 0) {
+        return WINGO_ERR_INVALID_ARG;
+    }
+
+    if (timeout_ms < 0) {
+        return WINGO_ERR_INVALID_ARG;
+    }
+
+    sock->timeout_ms = timeout_ms;
+
+    /* Set SO_RCVTIMEO and SO_SNDTIMEO */
+    if (timeout_ms > 0) {
+        tv.tv_sec = timeout_ms / 1000;
+        tv.tv_usec = (timeout_ms % 1000) * 1000;
+    } else {
+        tv.tv_sec = 0;
+        tv.tv_usec = 0;
+    }
+
+    if (setsockopt(sock->fd, SOL_SOCKET, SO_RCVTIMEO,
+                   &tv, sizeof(tv)) < 0) {
+        sock->last_error = errno_to_error(errno);
+        return sock->last_error;
+    }
+
+    if (setsockopt(sock->fd, SOL_SOCKET, SO_SNDTIMEO,
+                   &tv, sizeof(tv)) < 0) {
+        sock->last_error = errno_to_error(errno);
+        return sock->last_error;
+    }
+
+    return WINGO_SUCCESS;
+}
+/* ============================================================================
+ * SOCKET QUERY
+ * ============================================================================ */
+
+/*
+ * Get socket kind.
+ */
+wingo_sock_kind_t wingo_sock_kind(const wingo_sock_t *sock)
+{
+    if (sock == NULL) {
+        return WINGO_SOCK_KIND_UDP;
+    }
+
+    return sock->kind;
+}
+
+/*
+ * Get socket state.
+ */
+wingo_sock_state_t wingo_sock_state(const wingo_sock_t *sock)
+{
+    if (sock == NULL) {
+        return WINGO_SOCK_STATE_CLOSED;
+    }
+
+    return sock->state;
+}
+
+/*
+ * Get socket file descriptor.
+ */
+int wingo_sock_fd(const wingo_sock_t *sock)
+{
+    if (sock == NULL) {
+        return -1;
+    }
+
+    return sock->fd;
+}
+
+/*
+ * Get local address.
+ *
+ * Returns a new address (caller owns it).
+ * Returns NULL if not bound.
+ */
+wingo_addr_t *wingo_sock_local_addr(const wingo_sock_t *sock)
+{
+    struct sockaddr_storage ss;
+    socklen_t ss_len;
+    wingo_addr_t *addr;
+
+    if (sock == NULL || sock->fd < 0) {
+        return NULL;
+    }
+
+    /* If we cached it, return a copy */
+    if (sock->local != NULL) {
+        return wingo_addr_copy(sock->local);
+    }
+
+    /* Otherwise query the kernel */
+    memset(&ss, 0, sizeof(ss));
+    ss_len = sizeof(ss);
+
+    if (getsockname(sock->fd, (struct sockaddr *)&ss, &ss_len) < 0) {
+        return NULL;
+    }
+
+    addr = calloc(1, sizeof(wingo_addr_t));
+    if (addr == NULL) {
+        return NULL;
+    }
+
+    memcpy(&addr->ss, &ss, ss_len);
+    addr->ss_len = ss_len;
+    addr->ip_str_valid = false;
+
+    return addr;
+}
+
+/*
+ * Get remote address.
+ *
+ * Returns a new address (caller owns it).
+ * Returns NULL if not connected.
+ */
+wingo_addr_t *wingo_sock_remote_addr(const wingo_sock_t *sock)
+{
+    struct sockaddr_storage ss;
+    socklen_t ss_len;
+    wingo_addr_t *addr;
+
+    if (sock == NULL || sock->fd < 0) {
+        return NULL;
+    }
+
+    /* If we cached it, return a copy */
+    if (sock->remote != NULL) {
+        return wingo_addr_copy(sock->remote);
+    }
+
+    /* Otherwise query the kernel */
+    memset(&ss, 0, sizeof(ss));
+    ss_len = sizeof(ss);
+
+    if (getpeername(sock->fd, (struct sockaddr *)&ss, &ss_len) < 0) {
+        return NULL;
+    }
+
+    addr = calloc(1, sizeof(wingo_addr_t));
+    if (addr == NULL) {
+        return NULL;
+    }
+
+    memcpy(&addr->ss, &ss, ss_len);
+    addr->ss_len = ss_len;
+    addr->ip_str_valid = false;
+
+    return addr;
+}
+
+/*
+ * Check if socket is open.
+ */
+bool wingo_sock_is_open(const wingo_sock_t *sock)
+{
+    if (sock == NULL) {
+        return false;
+    }
+
+    return sock->fd >= 0 && sock->state != WINGO_SOCK_STATE_CLOSED;
+}
+
+/*
+ * Check if socket is connected.
+ */
+bool wingo_sock_is_connected(const wingo_sock_t *sock)
+{
+    if (sock == NULL) {
+        return false;
+    }
+
+    return sock->state == WINGO_SOCK_STATE_CONNECT;
+}
+
+/* ============================================================================
+ * SOCKET ERROR
+ * ============================================================================ */
+
+/*
+ * Get last socket error.
+ */
+wingo_error_t wingo_sock_last_error(const wingo_sock_t *sock)
+{
+    if (sock == NULL) {
+        return WINGO_ERR_INVALID_ARG;
+    }
+
+    return sock->last_error;
+}
+
+/*
+ * Clear socket error.
+ */
+void wingo_sock_clear_error(wingo_sock_t *sock)
+{
+    if (sock == NULL) {
+        return;
+    }
+
+    sock->last_error = WINGO_SUCCESS;
+}
+
+/*
+ * Check if socket has error.
+ */
+bool wingo_sock_has_error(const wingo_sock_t *sock)
+{
+    if (sock == NULL) {
+        return true;
+    }
+
+    return sock->last_error != WINGO_SUCCESS;
+}
+
+/*
+ * Get socket error string.
+ */
+wingo_error_t wingo_sock_error_str(const wingo_sock_t *sock,
+                                    char *buf, wingo_size size)
+{
+    int n;
+
+    if (sock == NULL || buf == NULL || size == 0) {
+        return WINGO_ERR_INVALID_ARG;
+    }
+
+    n = snprintf(buf, size, "%s", wingo_error_str(sock->last_error));
+
+    if (n < 0 || (wingo_size)n >= size) {
+        return WINGO_ERR_OVERFLOW;
+    }
+
+    return WINGO_SUCCESS;
+}
+
+/* ============================================================================
+ * SOCKET EPOLL INTEGRATION
+ * ============================================================================ */
+
+/*
+ * Get socket for epoll registration.
+ *
+ * This is just the file descriptor, but we provide it
+ * as a function for clarity and future-proofing.
+ */
+int wingo_sock_epoll_fd(const wingo_sock_t *sock)
+{
+    if (sock == NULL) {
+        return -1;
+    }
+
+    return sock->fd;
+}
+
+/* ============================================================================
+ * INTERNAL: GET SOCKADDR FOR SEND/RECV
+ * ============================================================================ */
+
+/*
+ * Get raw sockaddr from wingo_addr_t.
+ *
+ * This is used internally by callers that need raw sockaddr.
+ * It is exposed here for advanced use cases (e.g., epoll integration).
+ *
+ * @param addr      Address
+ * @param out_ss    Output sockaddr_storage
+ * @param out_len   Output length
+ * @return          WINGO_SUCCESS on success, error code on failure
+ */
+wingo_error_t wingo_addr_to_sockaddr(const wingo_addr_t *addr,
+                                      struct sockaddr_storage *out_ss,
+                                      socklen_t *out_len)
+{
+    if (addr == NULL || out_ss == NULL || out_len == NULL) {
+        return WINGO_ERR_INVALID_ARG;
+    }
+
+    memcpy(out_ss, &addr->ss, addr->ss_len);
+    *out_len = addr->ss_len;
+
+    return WINGO_SUCCESS;
+}
+
+/* ============================================================================
+ * END OF FILE
+ * ============================================================================ */
