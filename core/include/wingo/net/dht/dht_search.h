@@ -1,4 +1,4 @@
-/*
+ /*
  * Wingo — P2P Internet Sharing Tool (Repo: Bowie)
  * Copyright (C) 2024 ASBM Team
  *
@@ -26,6 +26,18 @@
  *
  * This header provides the Kademlia search (iterative lookup) for Bowie DHT.
  *
+ * Design principle: PURE ALGORITHM
+ *
+ *   This module does NOT perform network I/O. It is a state machine that:
+ *     - Knows which nodes to query next
+ *     - Tracks replies and timeouts
+ *     - Decides when the search has converged
+ *
+ *   The caller (DHT) is responsible for:
+ *     - Sending query messages to nodes
+ *     - Feeding responses back via wingo_dht_search_insert_node()
+ *     - Calling wingo_dht_search_step() to get the next node to query
+ *
  * Architecture:
  *
  *   ┌─────────────────────────────────────────────────────────────┐
@@ -33,21 +45,23 @@
  *   │                                                             │
  *   │   ┌─────────────────────────────────────────────────────┐   │
  *   │   │  Search State                                       │   │
-│   │   │  ├── Target ID (infohash or node ID)                │   │
-│   │   │  ├── Node List (closest seen)                       │   │
-│   │   │  ├── Step Time                                     │   │
-│   │   │  └── Done Flag                                      │   │
-│   │   └─────────────────────────────────────────────────────┘   │
-│   │                                                             │
-│   │   Iterative Lookup:                                         │
-│   │   ├── Start with closest known nodes                        │
-│   │   ├── Send queries in parallel (3-4 in-flight)              │
-│   │   ├── Collect responses                                     │
-│   │   ├── Update closest nodes                                  │
-│   │   ├── Repeat until converged                               │
-│   │   └── Return closest nodes or peers                         │
-│   │                                                             │
-│   └─────────────────────────────────────────────────────────────┘
+ *   │   │  ├── Target ID (infohash or node ID)                │   │
+ *   │   │  ├── Node List (closest seen, sorted)               │   │
+ *   │   │  ├── In-flight queries                              │   │
+ *   │   │  └── State (INIT, RUNNING, DONE, ...)               │   │
+ *   │   └─────────────────────────────────────────────────────┘   │
+ *   │                                                             │
+ *   │   Iterative Lookup:                                         │
+ *   │   ┌─────────────────────────────────────────────────────┐   │
+ *   │   │  1. caller calls step()                             │   │
+ *   │   │  2. step() returns next node to query               │   │
+ *   │   │  3. caller sends query, gets response               │   │
+ *   │   │  4. caller calls insert_node() with new nodes       │   │
+ *   │   │  5. caller calls node_replied() for the queried node│   │
+ *   │   │  6. repeat until is_done() returns true             │   │
+ *   │   └─────────────────────────────────────────────────────┘   │
+ *   │                                                             │
+ *   └─────────────────────────────────────────────────────────────┘
  *
  * ============================================================================
  */
@@ -55,9 +69,8 @@
 #include "wingo/common.h"
 #include "wingo/error.h"
 #include "wingo/net/socket.h"
-#include "wingo/net/dht.h"
+#include "wingo/net/dht/dht_types.h"
 #include "wingo/net/dht/dht_node.h"
-#include "wingo/net/dht/dht_routing.h"
 
 /* ============================================================================
  * DHT SEARCH CONSTANTS
@@ -66,7 +79,7 @@
 /*
  * Maximum nodes in a search.
  */
-#define WINGO_DHT_SEARCH_MAX_NODES      8
+#define WINGO_DHT_SEARCH_MAX_NODES      64
 
 /*
  * Maximum in-flight queries.
@@ -96,21 +109,32 @@
  * Search type.
  */
 typedef enum {
-    WINGO_DHT_SEARCH_TYPE_FIND_NODE  = 0,
-    WINGO_DHT_SEARCH_TYPE_GET_PEERS  = 1,
-    WINGO_DHT_SEARCH_TYPE_ANNOUNCE   = 2,
+    WINGO_DHT_SEARCH_TYPE_FIND_NODE  = 0,   /* Find nodes close to target */
+    WINGO_DHT_SEARCH_TYPE_GET_PEERS  = 1,   /* Find peers for info hash */
+    WINGO_DHT_SEARCH_TYPE_ANNOUNCE   = 2,   /* Announce ourselves */
 } wingo_dht_search_type_t;
 
 /*
  * Search state.
  */
 typedef enum {
-    WINGO_DHT_SEARCH_STATE_INIT      = 0,
-    WINGO_DHT_SEARCH_STATE_RUNNING   = 1,
-    WINGO_DHT_SEARCH_STATE_DONE      = 2,
-    WINGO_DHT_SEARCH_STATE_TIMEOUT   = 3,
-    WINGO_DHT_SEARCH_STATE_ERROR     = 4,
+    WINGO_DHT_SEARCH_STATE_INIT      = 0,   /* Created, not started */
+    WINGO_DHT_SEARCH_STATE_RUNNING   = 1,   /* In progress */
+    WINGO_DHT_SEARCH_STATE_DONE      = 2,   /* Completed successfully */
+    WINGO_DHT_SEARCH_STATE_TIMEOUT   = 3,   /* Timed out */
+    WINGO_DHT_SEARCH_STATE_CANCELED  = 4,   /* Canceled by caller */
+    WINGO_DHT_SEARCH_STATE_ERROR     = 5,   /* Error occurred */
 } wingo_dht_search_state_t;
+
+/*
+ * Search step result.
+ */
+typedef enum {
+    WINGO_DHT_STEP_DONE        = 0,   /* Search is done, no more queries */
+    WINGO_DHT_STEP_QUERY       = 1,   /* Query the returned node */
+    WINGO_DHT_STEP_WAIT        = 2,   /* Wait for in-flight queries */
+    WINGO_DHT_STEP_TIMEOUT     = 3,   /* Search timed out */
+} wingo_dht_step_result_t;
 
 /* ============================================================================
  * DHT SEARCH STRUCTURE (OPAQUE)
@@ -131,14 +155,40 @@ typedef struct wingo_dht_search wingo_dht_search_t;
 typedef struct wingo_dht_search_mgr wingo_dht_search_mgr_t;
 
 /* ============================================================================
+ * SEARCH CALLBACKS
+ * ============================================================================ */
+
+/*
+ * Search peer callback.
+ *
+ * Called when a peer address is discovered.
+ *
+ * @param addr      Peer address
+ * @param userdata  User data
+ */
+typedef void (*wingo_dht_search_peer_cb_t)(const wingo_addr_t *addr,
+                                            void *userdata);
+
+/*
+ * Search done callback.
+ *
+ * Called when search is completed (success, timeout, or error).
+ *
+ * @param result    Result code (WINGO_SUCCESS, WINGO_ERR_TIMEOUT, ...)
+ * @param userdata  User data
+ */
+typedef void (*wingo_dht_search_done_cb_t)(wingo_error_t result,
+                                            void *userdata);
+
+/* ============================================================================
  * SEARCH MANAGER LIFECYCLE
  * ============================================================================ */
 
 /*
  * Create a new search manager.
  *
- * @param max_searches Maximum number of concurrent searches
- * @return          Search manager, or NULL on error
+ * @param max_searches  Maximum number of concurrent searches
+ * @return              Search manager, or NULL on error
  */
 wingo_dht_search_mgr_t *wingo_dht_search_mgr_new(wingo_size max_searches);
 
@@ -196,68 +246,44 @@ wingo_error_t wingo_dht_search_cancel(wingo_dht_search_t *search);
 
 /*
  * Get search type.
- *
- * @param search    Search
- * @return          Search type
  */
 wingo_dht_search_type_t wingo_dht_search_type(
     const wingo_dht_search_t *search);
 
 /*
  * Get search state.
- *
- * @param search    Search
- * @return          Search state
  */
 wingo_dht_search_state_t wingo_dht_search_state(
     const wingo_dht_search_t *search);
 
 /*
  * Get search target ID.
- *
- * @param search    Search
- * @return          Target ID, or NULL on error
  */
 const wingo_dht_id_t *wingo_dht_search_target(
     const wingo_dht_search_t *search);
 
 /*
  * Get search port.
- *
- * @param search    Search
- * @return          Port number
  */
 wingo_u16 wingo_dht_search_port(const wingo_dht_search_t *search);
 
 /*
  * Get search transaction ID.
- *
- * @param search    Search
- * @return          Transaction ID
  */
 wingo_u16 wingo_dht_search_tid(const wingo_dht_search_t *search);
 
 /*
  * Check if search is done.
- *
- * @param search    Search
- * @return          true if done, false otherwise
  */
 bool wingo_dht_search_is_done(const wingo_dht_search_t *search);
 
 /*
  * Check if search is active.
- *
- * @param search    Search
- * @return          true if active, false otherwise
  */
 bool wingo_dht_search_is_active(const wingo_dht_search_t *search);
 
 /*
- * Get search age.
- *
- * @param search    Search
- * @return          Age in seconds
+ * Get search age (seconds).
  */
 wingo_i64 wingo_dht_search_age(const wingo_dht_search_t *search);
 
@@ -267,18 +293,11 @@ wingo_i64 wingo_dht_search_age(const wingo_dht_search_t *search);
 
 /*
  * Get search node count.
- *
- * @param search    Search
- * @return          Number of nodes
  */
 wingo_size wingo_dht_search_node_count(const wingo_dht_search_t *search);
 
 /*
  * Get search node at index.
- *
- * @param search    Search
- * @param index     Index
- * @return          Node info, or NULL if out of range
  */
 const wingo_dht_node_info_t *wingo_dht_search_node(
     const wingo_dht_search_t *search,
@@ -286,6 +305,9 @@ const wingo_dht_node_info_t *wingo_dht_search_node(
 
 /*
  * Insert a node into search.
+ *
+ * Caller provides node ID + address. Search takes ownership of
+ * the address (copies it).
  *
  * @param search    Search
  * @param id        Node ID
@@ -304,22 +326,12 @@ wingo_error_t wingo_dht_search_insert_node(wingo_dht_search_t *search,
 
 /*
  * Remove a node from search.
- *
- * @param search    Search
- * @param id        Node ID
- * @return          WINGO_SUCCESS on success, error code on failure
  */
 wingo_error_t wingo_dht_search_remove_node(wingo_dht_search_t *search,
                                             const wingo_dht_id_t *id);
 
 /*
  * Mark a node as replied.
- *
- * @param search    Search
- * @param id        Node ID
- * @param token     Token (may be NULL)
- * @param token_len Token length
- * @return          WINGO_SUCCESS on success, error code on failure
  */
 wingo_error_t wingo_dht_search_node_replied(wingo_dht_search_t *search,
                                              const wingo_dht_id_t *id,
@@ -328,21 +340,12 @@ wingo_error_t wingo_dht_search_node_replied(wingo_dht_search_t *search,
 
 /*
  * Mark a node as acked (announce).
- *
- * @param search    Search
- * @param id        Node ID
- * @return          WINGO_SUCCESS on success, error code on failure
  */
 wingo_error_t wingo_dht_search_node_acked(wingo_dht_search_t *search,
                                            const wingo_dht_id_t *id);
 
 /*
  * Get closest nodes from search.
- *
- * @param search    Search
- * @param nodes     Output array
- * @param max       Maximum number of nodes
- * @return          Number of nodes written
  */
 wingo_size wingo_dht_search_closest_nodes(wingo_dht_search_t *search,
                                            wingo_dht_node_info_t *nodes,
@@ -353,18 +356,25 @@ wingo_size wingo_dht_search_closest_nodes(wingo_dht_search_t *search,
  * ============================================================================ */
 
 /*
- * Step the search (send queries).
+ * Step the search.
+ *
+ * This is the main algorithm entry point. Caller calls this
+ * repeatedly to drive the search forward.
  *
  * @param search    Search
- * @return          WINGO_SUCCESS on success, error code on failure
+ * @param out_node  Output: node to query (if result is QUERY)
+ * @param out_addr  Output: address to query (if result is QUERY)
+ * @return          Step result
  */
-wingo_error_t wingo_dht_search_step(wingo_dht_search_t *search);
+wingo_dht_step_result_t wingo_dht_search_step(
+    wingo_dht_search_t *search,
+    wingo_dht_node_info_t *out_node);
 
 /*
  * Get next step time.
  *
  * @param search    Search
- * @return          Next step timestamp
+ * @return          Unix timestamp of next step, or 0 if no step needed
  */
 wingo_i64 wingo_dht_search_next_step(const wingo_dht_search_t *search);
 
@@ -377,33 +387,11 @@ wingo_i64 wingo_dht_search_next_step(const wingo_dht_search_t *search);
 bool wingo_dht_search_needs_step(const wingo_dht_search_t *search);
 
 /* ============================================================================
- * SEARCH CALLBACK
+ * SEARCH CALLBACKS
  * ============================================================================ */
 
 /*
- * Search peer callback.
- *
- * @param addr      Peer address
- * @param userdata  User data
- */
-typedef void (*wingo_dht_search_peer_cb_t)(const wingo_addr_t *addr,
-                                            void *userdata);
-
-/*
- * Search done callback.
- *
- * @param result    Result code
- * @param userdata  User data
- */
-typedef void (*wingo_dht_search_done_cb_t)(int result, void *userdata);
-
-/*
  * Set search peer callback.
- *
- * @param search    Search
- * @param callback  Peer callback
- * @param userdata  User data
- * @return          WINGO_SUCCESS on success, error code on failure
  */
 wingo_error_t wingo_dht_search_set_peer_callback(
     wingo_dht_search_t *search,
@@ -412,11 +400,6 @@ wingo_error_t wingo_dht_search_set_peer_callback(
 
 /*
  * Set search done callback.
- *
- * @param search    Search
- * @param callback  Done callback
- * @param userdata  User data
- * @return          WINGO_SUCCESS on success, error code on failure
  */
 wingo_error_t wingo_dht_search_set_done_callback(
     wingo_dht_search_t *search,
@@ -429,10 +412,6 @@ wingo_error_t wingo_dht_search_set_done_callback(
 
 /*
  * Find a search by transaction ID.
- *
- * @param mgr       Search manager
- * @param tid       Transaction ID
- * @return          Search, or NULL if not found
  */
 wingo_dht_search_t *wingo_dht_search_mgr_find(
     wingo_dht_search_mgr_t *mgr,
@@ -440,17 +419,11 @@ wingo_dht_search_t *wingo_dht_search_mgr_find(
 
 /*
  * Get search count.
- *
- * @param mgr       Search manager
- * @return          Number of searches
  */
 wingo_size wingo_dht_search_mgr_count(const wingo_dht_search_mgr_t *mgr);
 
 /*
  * Get active search count.
- *
- * @param mgr       Search manager
- * @return          Number of active searches
  */
 wingo_size wingo_dht_search_mgr_active_count(
     const wingo_dht_search_mgr_t *mgr);
@@ -473,17 +446,12 @@ wingo_size wingo_dht_search_mgr_expire(wingo_dht_search_mgr_t *mgr);
 
 /*
  * Get next step time for all searches.
- *
- * @param mgr       Search manager
- * @return          Next step timestamp
  */
 wingo_i64 wingo_dht_search_mgr_next_step(
     const wingo_dht_search_mgr_t *mgr);
 
 /*
  * Clear all searches.
- *
- * @param mgr       Search manager
  */
 void wingo_dht_search_mgr_clear(wingo_dht_search_mgr_t *mgr);
 
@@ -507,10 +475,6 @@ typedef struct {
 
 /*
  * Get search manager statistics.
- *
- * @param mgr       Search manager
- * @param stats     Output statistics
- * @return          WINGO_SUCCESS on success, error code on failure
  */
 wingo_error_t wingo_dht_search_mgr_get_stats(
     const wingo_dht_search_mgr_t *mgr,
@@ -518,8 +482,6 @@ wingo_error_t wingo_dht_search_mgr_get_stats(
 
 /*
  * Reset search manager statistics.
- *
- * @param mgr       Search manager
  */
 void wingo_dht_search_mgr_reset_stats(wingo_dht_search_mgr_t *mgr);
 
@@ -529,33 +491,26 @@ void wingo_dht_search_mgr_reset_stats(wingo_dht_search_mgr_t *mgr);
 
 /*
  * Get search type name.
- *
- * @param type      Search type
- * @return          Static string
  */
 const char *wingo_dht_search_type_name(wingo_dht_search_type_t type);
 
 /*
  * Get search state name.
- *
- * @param state     Search state
- * @return          Static string
  */
 const char *wingo_dht_search_state_name(wingo_dht_search_state_t state);
 
 /*
+ * Get step result name.
+ */
+const char *wingo_dht_step_result_name(wingo_dht_step_result_t result);
+
+/*
  * Print search.
- *
- * @param search    Search
- * @param f         Output file (NULL = stderr)
  */
 void wingo_dht_search_print(const wingo_dht_search_t *search, FILE *f);
 
 /*
  * Print search manager.
- *
- * @param mgr       Search manager
- * @param f         Output file (NULL = stderr)
  */
 void wingo_dht_search_mgr_print(const wingo_dht_search_mgr_t *mgr, FILE *f);
 
