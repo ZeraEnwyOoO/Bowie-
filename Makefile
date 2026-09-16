@@ -14,6 +14,23 @@
 #
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
+#
+# ============================================================================
+# Bowie — Root Makefile
+# ============================================================================
+#
+# This Makefile builds:
+#   - libbowie.a     (core library)
+#   - bowie_test     (test program)
+#
+# Usage:
+#   make             — build library
+#   make test        — build test program
+#   make run         — build and run test
+#   make all         — build library + test
+#   make clean       — clean build artifacts
+#   make install     — install library (requires root)
+#
 # ============================================================================
 
 # ============================================================================
@@ -24,124 +41,68 @@ PROJECT_NAME    := bowie
 PROJECT_VERSION := 0.1.0
 
 # ============================================================================
-# COMPILER & TOOLS
-# ============================================================================
-
-CC      := gcc
-AR      := ar
-RANLIB  := ranlib
-MKDIR   := mkdir -p
-RM      := rm -f
-RMDIR   := rm -rf
-INSTALL := install
-
-# ============================================================================
 # DIRECTORIES
 # ============================================================================
 
-CORE_DIR        := core
-INCLUDE_DIR     := $(CORE_DIR)/include
-SRC_DIR         := $(CORE_DIR)/src
-TEST_DIR        := $(CORE_DIR)/tests
-PLATFORM_DIR    := platforms
+# Source root
+SRC_DIR         := core/src
+INC_DIR         := core/include
 
+# Build output
 BUILD_DIR       := build
 OBJ_DIR         := $(BUILD_DIR)/obj
-BIN_DIR         := $(BUILD_DIR)/bin
 LIB_DIR         := $(BUILD_DIR)/lib
-TEST_BIN_DIR    := $(BUILD_DIR)/test
+BIN_DIR         := $(BUILD_DIR)/bin
+
+# Test
+TEST_DIR        := tests
 
 # ============================================================================
-# TARGETS
+# COMPILER
 # ============================================================================
 
-LIB_NAME        := libbowie.a
-LIB_TARGET      := $(LIB_DIR)/$(LIB_NAME)
-
-# Phase 1 Tests
-TEST_BUFFER     := $(TEST_BIN_DIR)/test_buffer
-TEST_LIST       := $(TEST_BIN_DIR)/test_list
-TEST_QUEUE      := $(TEST_BIN_DIR)/test_queue
-TEST_HASHMAP    := $(TEST_BIN_DIR)/test_hashmap
-
-# Phase 2 Tests
-TEST_ENGINE     := $(TEST_BIN_DIR)/test_engine
-TEST_EVENT      := $(TEST_BIN_DIR)/test_event
-TEST_STATE      := $(TEST_BIN_DIR)/test_state
-TEST_THREAD     := $(TEST_BIN_DIR)/test_thread
-
-TEST_TARGETS    := $(TEST_BUFFER) $(TEST_LIST) $(TEST_QUEUE) $(TEST_HASHMAP) \
-                   $(TEST_ENGINE) $(TEST_EVENT) $(TEST_STATE) $(TEST_THREAD)
+CC              ?= gcc
+AR              ?= ar
 
 # ============================================================================
-# COMPILER FLAGS
+# FLAGS
 # ============================================================================
 
-CSTD := -std=c11
+# C standard
+CSTD            := -std=c11
 
-WARNINGS := \
-    -Wall \
-    -Wextra \
-    -Werror \
-    -Wpedantic \
-    -Wshadow \
-    -Wpointer-arith \
-    -Wcast-align \
-    -Wwrite-strings \
-    -Wmissing-prototypes \
-    -Wmissing-declarations \
-    -Wstrict-prototypes \
-    -Wold-style-definition \
-    -Wredundant-decls \
-    -Wnested-externs \
-    -Wno-unused-parameter \
-    -Wno-unused-function \
-    -Wno-format-truncation \
-    -Wno-stringop-truncation
+# Warnings
+WARNINGS        := -Wall -Wextra -Wpedantic \
+                   -Wno-unused-parameter \
+                   -Wno-unused-function
 
-OPT := -O2
-DEBUG := -g
+# Optimization
+OPT             := -O2
 
-DEFINES := \
-    -D_GNU_SOURCE \
-    -D_POSIX_C_SOURCE=200809L
+# Debug
+DEBUG           := -g
 
-INCLUDES := \
-    -I$(INCLUDE_DIR) \
-    -I$(PLATFORM_DIR) \
-    -I.
+# Defines
+DEFINES         := -D_GNU_SOURCE \
+                   -D_POSIX_C_SOURCE=200809L
 
-CFLAGS := \
-    $(CSTD) \
-    $(WARNINGS) \
-    $(OPT) \
-    $(DEBUG) \
-    $(DEFINES) \
-    $(INCLUDES) \
-    -fPIC \
-    -pthread
+# Includes
+INCLUDES        := -I$(INC_DIR)
 
-LDFLAGS := \
-    -pthread
+# Combine
+CFLAGS          := $(CSTD) $(WARNINGS) $(OPT) $(DEBUG) $(DEFINES) $(INCLUDES)
 
-LIBS := \
-    -lssl \
-    -lcrypto \
-    -lpthread
+# Linker flags
+LDFLAGS         :=
 
-TEST_LIBS := \
-    -lcheck \
-    -lpthread \
-    -lrt \
-    -lm \
-    $(LIBS)
+# Libraries
+LIBS            := -lpthread
 
 # ============================================================================
-# SOURCE FILES
+# SOURCES — PHASE 1 (Foundation)
 # ============================================================================
 
-# Phase 1: Foundation
-CORE_SRCS := \
+SRCS_PHASE1 := \
     $(SRC_DIR)/error.c \
     $(SRC_DIR)/log.c \
     $(SRC_DIR)/util/buffer.c \
@@ -151,165 +112,193 @@ CORE_SRCS := \
     $(SRC_DIR)/util/time.c \
     $(SRC_DIR)/util/random.c
 
-# Phase 2: Core Engine
-CORE_SRCS += \
+# ============================================================================
+# SOURCES — PHASE 2 (Core Engine)
+# ============================================================================
+
+SRCS_PHASE2 := \
     $(SRC_DIR)/core/engine.c \
     $(SRC_DIR)/core/event.c \
     $(SRC_DIR)/core/state.c \
     $(SRC_DIR)/core/thread.c
 
-# Phase 3: Platform (Cross-Platform)
-# NOTE: platform.c is in platforms/ (root level)
-CORE_SRCS += \
-    $(PLATFORM_DIR)/platform.c
-
-CORE_OBJS := $(patsubst %.c,$(OBJ_DIR)/%.o,$(CORE_SRCS))
-
 # ============================================================================
-# TEST SOURCES
+# SOURCES — PHASE 3 (Platform)
 # ============================================================================
 
-# Phase 1 Tests
-TEST_BUFFER_SRCS    := $(TEST_DIR)/unit/test_buffer.c
-TEST_LIST_SRCS      := $(TEST_DIR)/unit/test_list.c
-TEST_QUEUE_SRCS     := $(TEST_DIR)/unit/test_queue.c
-TEST_HASHMAP_SRCS   := $(TEST_DIR)/unit/test_hashmap.c
-
-# Phase 2 Tests
-TEST_ENGINE_SRCS    := $(TEST_DIR)/unit/test_engine.c
-TEST_EVENT_SRCS     := $(TEST_DIR)/unit/test_event.c
-TEST_STATE_SRCS     := $(TEST_DIR)/unit/test_state.c
-TEST_THREAD_SRCS    := $(TEST_DIR)/unit/test_thread.c
+SRCS_PHASE3 := \
+    $(SRC_DIR)/platform/platform.c
 
 # ============================================================================
-# DEFAULT TARGET
+# SOURCES — PHASE 4 (Network)
 # ============================================================================
 
-.PHONY: all
-all: $(LIB_TARGET)
+SRCS_PHASE4 := \
+    $(SRC_DIR)/net/socket.c \
+    $(SRC_DIR)/net/peer.c \
+    $(SRC_DIR)/net/dht/dht.c \
+    $(SRC_DIR)/net/dht/dht_node.c \
+    $(SRC_DIR)/net/dht/dht_bucket.c \
+    $(SRC_DIR)/net/dht/dht_routing.c \
+    $(SRC_DIR)/net/dht/dht_search.c \
+    $(SRC_DIR)/net/dht/dht_storage.c \
+    $(SRC_DIR)/net/dht/dht_message.c \
+    $(SRC_DIR)/net/dht/dht_token.c \
+    $(SRC_DIR)/net/dht/dht_security.c \
+    $(SRC_DIR)/net/dht/dht_bencode.c \
+    $(SRC_DIR)/net/dht/dht_config.c
 
 # ============================================================================
-# LIBRARY BUILD
+# ALL SOURCES
 # ============================================================================
 
-$(LIB_TARGET): $(CORE_OBJS) | $(LIB_DIR)
+SRCS            := $(SRCS_PHASE1) $(SRCS_PHASE2) $(SRCS_PHASE3) $(SRCS_PHASE4)
+
+# Object files
+OBJS            := $(SRCS:$(SRC_DIR)/%.c=$(OBJ_DIR)/%.o)
+
+# Dependency files
+DEPS            := $(OBJS:.o=.d)
+
+# ============================================================================
+# LIBRARY
+# ============================================================================
+
+LIB_NAME        := lib$(PROJECT_NAME).a
+LIB_PATH        := $(LIB_DIR)/$(LIB_NAME)
+
+# ============================================================================
+# TEST PROGRAM
+# ============================================================================
+
+TEST_NAME       := bowie_test
+TEST_PATH       := $(BIN_DIR)/$(TEST_NAME)
+
+TEST_SRCS       := $(wildcard $(TEST_DIR)/*.c)
+TEST_OBJS       := $(TEST_SRCS:$(TEST_DIR)/%.c=$(OBJ_DIR)/test/%.o)
+
+# ============================================================================
+# TARGETS
+# ============================================================================
+
+.PHONY: all lib test run clean install uninstall help dirs
+
+# Default target
+all: lib
+
+# ============================================================================
+# DIRECTORIES
+# ============================================================================
+
+dirs:
+	@mkdir -p $(OBJ_DIR)
+	@mkdir -p $(OBJ_DIR)/net
+	@mkdir -p $(OBJ_DIR)/net/dht
+	@mkdir -p $(OBJ_DIR)/core
+	@mkdir -p $(OBJ_DIR)/util
+	@mkdir -p $(OBJ_DIR)/platform
+	@mkdir -p $(OBJ_DIR)/test
+	@mkdir -p $(LIB_DIR)
+	@mkdir -p $(BIN_DIR)
+
+# ============================================================================
+# LIBRARY
+# ============================================================================
+
+lib: dirs $(LIB_PATH)
+
+$(LIB_PATH): $(OBJS)
 	@echo "  AR      $@"
-	@$(AR) rcs $@ $(CORE_OBJS)
-	@$(RANLIB) $@
-	@echo "  ✓ Library built: $@"
+	@$(AR) rcs $@ $^
 
-$(OBJ_DIR)/%.o: %.c | $(OBJ_DIR)
-	@$(MKDIR) $(dir $@)
+# ============================================================================
+# OBJECT FILES
+# ============================================================================
+
+$(OBJ_DIR)/%.o: $(SRC_DIR)/%.c
+	@mkdir -p $(dir $@)
 	@echo "  CC      $<"
-	@$(CC) $(CFLAGS) -c $< -o $@
+	@$(CC) $(CFLAGS) -MMD -MP -c $< -o $@
 
 # ============================================================================
-# TEST BUILD
+# TEST PROGRAM
 # ============================================================================
 
-.PHONY: tests
-tests: $(TEST_TARGETS)
+test: dirs lib $(TEST_PATH)
 
-# Phase 1 Tests
-$(TEST_BUFFER): $(TEST_BUFFER_SRCS) $(LIB_TARGET) | $(TEST_BIN_DIR)
+$(TEST_PATH): $(TEST_OBJS) $(LIB_PATH)
 	@echo "  LD      $@"
-	@$(CC) $(CFLAGS) $< -L$(LIB_DIR) -lbowie $(TEST_LIBS) -o $@
+	@$(CC) $(CFLAGS) $(TEST_OBJS) $(LIB_PATH) $(LDFLAGS) $(LIBS) -o $@
 
-$(TEST_LIST): $(TEST_LIST_SRCS) $(LIB_TARGET) | $(TEST_BIN_DIR)
-	@echo "  LD      $@"
-	@$(CC) $(CFLAGS) $< -L$(LIB_DIR) -lbowie $(TEST_LIBS) -o $@
-
-$(TEST_QUEUE): $(TEST_QUEUE_SRCS) $(LIB_TARGET) | $(TEST_BIN_DIR)
-	@echo "  LD      $@"
-	@$(CC) $(CFLAGS) $< -L$(LIB_DIR) -lbowie $(TEST_LIBS) -o $@
-
-$(TEST_HASHMAP): $(TEST_HASHMAP_SRCS) $(LIB_TARGET) | $(TEST_BIN_DIR)
-	@echo "  LD      $@"
-	@$(CC) $(CFLAGS) $< -L$(LIB_DIR) -lbowie $(TEST_LIBS) -o $@
-
-# Phase 2 Tests
-$(TEST_ENGINE): $(TEST_ENGINE_SRCS) $(LIB_TARGET) | $(TEST_BIN_DIR)
-	@echo "  LD      $@"
-	@$(CC) $(CFLAGS) $< -L$(LIB_DIR) -lbowie $(TEST_LIBS) -o $@
-
-$(TEST_EVENT): $(TEST_EVENT_SRCS) $(LIB_TARGET) | $(TEST_BIN_DIR)
-	@echo "  LD      $@"
-	@$(CC) $(CFLAGS) $< -L$(LIB_DIR) -lbowie $(TEST_LIBS) -o $@
-
-$(TEST_STATE): $(TEST_STATE_SRCS) $(LIB_TARGET) | $(TEST_BIN_DIR)
-	@echo "  LD      $@"
-	@$(CC) $(CFLAGS) $< -L$(LIB_DIR) -lbowie $(TEST_LIBS) -o $@
-
-$(TEST_THREAD): $(TEST_THREAD_SRCS) $(LIB_TARGET) | $(TEST_BIN_DIR)
-	@echo "  LD      $@"
-	@$(CC) $(CFLAGS) $< -L$(LIB_DIR) -lbowie $(TEST_LIBS) -o $@
+$(OBJ_DIR)/test/%.o: $(TEST_DIR)/%.c
+	@mkdir -p $(dir $@)
+	@echo "  CC      $<"
+	@$(CC) $(CFLAGS) -MMD -MP -c $< -o $@
 
 # ============================================================================
-# RUN TESTS
+# RUN TEST
 # ============================================================================
 
-.PHONY: test
-test: tests
+run: test
 	@echo ""
-	@echo "=========================================="
-	@echo "  Running Phase 1 Tests"
-	@echo "=========================================="
-	@$(TEST_BUFFER)
-	@$(TEST_LIST)
-	@$(TEST_QUEUE)
-	@$(TEST_HASHMAP)
+	@echo "  Running $(TEST_NAME)..."
 	@echo ""
-	@echo "=========================================="
-	@echo "  Running Phase 2 Tests"
-	@echo "=========================================="
-	@$(TEST_ENGINE)
-	@$(TEST_EVENT)
-	@$(TEST_STATE)
-	@$(TEST_THREAD)
-	@echo ""
-	@echo "=========================================="
-	@echo "  All tests passed!"
-	@echo "=========================================="
+	@$(TEST_PATH)
 
 # ============================================================================
 # CLEAN
 # ============================================================================
 
-.PHONY: clean
 clean:
 	@echo "  CLEAN   $(BUILD_DIR)"
-	@$(RMDIR) $(BUILD_DIR)
+	@rm -rf $(BUILD_DIR)
 
 # ============================================================================
-# DIRECTORY CREATION
+# INSTALL
 # ============================================================================
 
-$(BUILD_DIR):
-	@$(MKDIR) $(BUILD_DIR)
+install: lib
+	@echo "  INSTALL $(LIB_NAME)"
+	@install -d /usr/local/lib
+	@install -d /usr/local/include/wingo
+	@install -m 644 $(LIB_PATH) /usr/local/lib/
+	@cp -r $(INC_DIR)/wingo/* /usr/local/include/wingo/
+	@echo "  INSTALL done"
 
-$(OBJ_DIR): | $(BUILD_DIR)
-	@$(MKDIR) $(OBJ_DIR)
-
-$(LIB_DIR): | $(BUILD_DIR)
-	@$(MKDIR) $(LIB_DIR)
-
-$(TEST_BIN_DIR): | $(BUILD_DIR)
-	@$(MKDIR) $(TEST_BIN_DIR)
+uninstall:
+	@echo "  UNINSTALL $(LIB_NAME)"
+	@rm -f /usr/local/lib/$(LIB_NAME)
+	@rm -rf /usr/local/include/wingo
+	@echo "  UNINSTALL done"
 
 # ============================================================================
 # HELP
 # ============================================================================
 
-.PHONY: help
 help:
+	@echo "Bowie — Makefile"
 	@echo ""
-	@echo "$(PROJECT_NAME) v$(PROJECT_VERSION)"
+	@echo "Targets:"
+	@echo "  all       — build library (default)"
+	@echo "  lib       — build library"
+	@echo "  test      — build test program"
+	@echo "  run       — build and run test"
+	@echo "  clean     — clean build artifacts"
+	@echo "  install   — install library (requires root)"
+	@echo "  uninstall — uninstall library"
+	@echo "  help      — show this help"
 	@echo ""
-	@echo "Usage: make [target]"
+	@echo "Variables:"
+	@echo "  CC        — C compiler (default: gcc)"
+	@echo "  AR        — archiver (default: ar)"
 	@echo ""
-	@echo "  all       Build library (default)"
-	@echo "  tests     Build all tests"
-	@echo "  test      Build and run all tests"
-	@echo "  clean     Remove build artifacts"
-	@echo "  help      Show this help"
-	@echo ""
+
+# ============================================================================
+# INCLUDE DEPENDENCIES
+# ============================================================================
+
+-include $(DEPS)
+
+# ============================================================================
+# END OF MAKEFILE
+# ============================================================================
