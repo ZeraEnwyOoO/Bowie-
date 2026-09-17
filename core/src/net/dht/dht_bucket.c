@@ -937,7 +937,7 @@ wingo_error_t wingo_dht_bucket_random_id(const wingo_dht_bucket_t *bucket,
     }
 
     /* Generate random ID */
-    rc = wingo_dht_random_id(&random_id);
+    rc = wingo_random_bytes(random_id.bytes, WINGO_DHT_ID_SIZE);
     if (rc != WINGO_SUCCESS) {
         return rc;
     }
@@ -975,7 +975,7 @@ wingo_error_t wingo_dht_bucket_random_id(const wingo_dht_bucket_t *bucket,
             }
 
             /* Retry with new random */
-            rc = wingo_dht_random_id(&random_id);
+            rc = wingo_random_bytes(random_id.bytes, WINGO_DHT_ID_SIZE);
             if (rc != WINGO_SUCCESS) {
                 return rc;
             }
