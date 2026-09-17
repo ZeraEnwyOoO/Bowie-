@@ -22,9 +22,12 @@ PROJECT_VERSION := 0.1.0
 
 CC      := gcc
 AR      := ar
-CFLAGS  := -std=c11 -Wall -Wextra -Wno-unused-parameter \
+ CFLAGS  := -std=c11 -Wall -Wextra -Wno-unused-parameter \
            -Wno-unused-function -Wno-format-truncation \
-           -Wno-stringop-truncation -fPIC -O0 -g
+           -Wno-stringop-truncation -fPIC -O0 -g \
+           -D_POSIX_C_SOURCE=200809L \
+           -D_DEFAULT_SOURCE \
+           -D_GNU_SOURCE
 LDFLAGS :=
 
 # ============================================================================
