@@ -17,7 +17,7 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
-
+#define _POSIX_C_SOURCE 200809L
 #include "wingo/log.h"
 #include "wingo/util/time.h"
 #include "wingo/util/buffer.h"
