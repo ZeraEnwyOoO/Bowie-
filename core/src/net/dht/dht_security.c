@@ -24,10 +24,10 @@
  *   - Rate limiting (per IP)
  *   - Martian address detection
  *   - Sybil protection
- *   - Token validation (delegates to dht_token)
+ *   - Token validation (delegates to dht_token_mgr)
  *
  * NOTE: Token management is implemented in dht_token.c.
- *       This file delegates token operations to dht_token.
+ *       This file delegates token operations to the token manager.
  *
  * ============================================================================
  */
@@ -98,8 +98,8 @@ struct wingo_dht_security {
     wingo_size                  sybil_count;
     bool                        enable_sybil;
 
-    /* ----- Token ----- */
-    wingo_dht_token_t          *token;
+    /* ----- Token manager ----- */
+    wingo_dht_token_mgr_t      *token_mgr;
 
     /* ----- Statistics ----- */
     wingo_dht_security_stats_t  stats;
@@ -411,8 +411,8 @@ wingo_dht_security_t *wingo_dht_security_new(wingo_size max_blacklist,
     security->enable_rate_limit = enable_rate_limit;
     security->enable_sybil = enable_sybil;
 
-    security->token = wingo_dht_token_new();
-    if (security->token == NULL) {
+    security->token_mgr = wingo_dht_token_mgr_new();
+    if (security->token_mgr == NULL) {
         free(security);
         return NULL;
     }
@@ -462,8 +462,8 @@ void wingo_dht_security_free(wingo_dht_security_t *security)
         sybil = sybil_next;
     }
 
-    if (security->token != NULL) {
-        wingo_dht_token_free(security->token);
+    if (security->token_mgr != NULL) {
+        wingo_dht_token_mgr_free(security->token_mgr);
     }
 
     free(security);
@@ -513,8 +513,8 @@ wingo_error_t wingo_dht_security_reset(wingo_dht_security_t *security)
     security->sybil_count = 0;
 
     /* Reset token manager too */
-    if (security->token != NULL) {
-        wingo_dht_token_reset(security->token);
+    if (security->token_mgr != NULL) {
+        wingo_dht_token_mgr_reset(security->token_mgr);
     }
 
     memset(&security->stats, 0, sizeof(security->stats));
@@ -713,15 +713,10 @@ wingo_size wingo_dht_security_blacklist_expire(
 
     return expired;
 }
-/* ============================================================================
+ /* ============================================================================
  * RATE LIMITING
  * ============================================================================ */
 
-/*
- * Check rate limit for an address.
- *
- * Uses token bucket: 1 token per second, max WINGO_DHT_SECURITY_RATE_PER_IP.
- */
 wingo_dht_security_result_t wingo_dht_security_rate_limit_check(
     wingo_dht_security_t *security,
     const wingo_addr_t *addr)
@@ -740,7 +735,6 @@ wingo_dht_security_result_t wingo_dht_security_rate_limit_check(
     now = wingo_time_now();
     entry = rate_get_or_create(security, addr);
     if (entry == NULL) {
-        /* Can't track → allow (fail open) */
         return WINGO_DHT_SECURITY_OK;
     }
 
@@ -790,9 +784,6 @@ wingo_dht_security_result_t wingo_dht_security_rate_limit_check_node(
     return WINGO_DHT_SECURITY_ERROR;
 }
 
-/*
- * Get rate limit count for an address.
- */
 wingo_size wingo_dht_security_rate_limit_count(
     const wingo_dht_security_t *security,
     const wingo_addr_t *addr)
@@ -812,9 +803,6 @@ wingo_size wingo_dht_security_rate_limit_count(
     return 0;
 }
 
-/*
- * Reset rate limit for an address.
- */
 void wingo_dht_security_rate_limit_reset(wingo_dht_security_t *security,
                                           const wingo_addr_t *addr)
 {
@@ -842,9 +830,6 @@ void wingo_dht_security_rate_limit_reset(wingo_dht_security_t *security,
     }
 }
 
-/*
- * Clear all rate limits.
- */
 void wingo_dht_security_rate_limit_clear(wingo_dht_security_t *security)
 {
     rate_entry_t *entry, *next;
@@ -897,13 +882,8 @@ bool wingo_dht_security_is_private(const wingo_addr_t *addr)
         return false;
     }
 
-    /* 10.0.0.0/8 */
     if (a == 10) return true;
-
-    /* 172.16.0.0/12 */
     if (a == 172 && b >= 16 && b <= 31) return true;
-
-    /* 192.168.0.0/16 */
     if (a == 192 && b == 168) return true;
 
     return false;
@@ -1100,7 +1080,7 @@ void wingo_dht_security_sybil_clear(wingo_dht_security_t *security)
 }
 
 /* ============================================================================
- * TOKEN VALIDATION (delegates to dht_token)
+ * TOKEN VALIDATION (delegates to token manager)
  * ============================================================================ */
 
 wingo_error_t wingo_dht_security_token_generate(
@@ -1109,11 +1089,11 @@ wingo_error_t wingo_dht_security_token_generate(
     wingo_u8 *out,
     wingo_size len)
 {
-    if (security == NULL || security->token == NULL) {
+    if (security == NULL || security->token_mgr == NULL) {
         return WINGO_ERR_INVALID_ARG;
     }
 
-    return wingo_dht_token_generate(security->token, addr, out, len);
+    return wingo_dht_token_mgr_generate(security->token_mgr, addr, out, len);
 }
 
 bool wingo_dht_security_token_verify(
@@ -1124,11 +1104,11 @@ bool wingo_dht_security_token_verify(
 {
     wingo_dht_token_result_t result;
 
-    if (security == NULL || security->token == NULL) {
+    if (security == NULL || security->token_mgr == NULL) {
         return false;
     }
 
-    result = wingo_dht_token_verify(security->token, addr, token, len);
+    result = wingo_dht_token_mgr_verify(security->token_mgr, addr, token, len);
 
     if (result != WINGO_DHT_TOKEN_OK) {
         security->stats.packets_bad_token++;
@@ -1141,46 +1121,37 @@ bool wingo_dht_security_token_verify(
 wingo_error_t wingo_dht_security_token_rotate(
     wingo_dht_security_t *security)
 {
-    if (security == NULL || security->token == NULL) {
+    if (security == NULL || security->token_mgr == NULL) {
         return WINGO_ERR_INVALID_ARG;
     }
 
-    return wingo_dht_token_rotate(security->token);
+    return wingo_dht_token_mgr_rotate(security->token_mgr);
 }
 
 wingo_i64 wingo_dht_security_token_next_rotate(
     const wingo_dht_security_t *security)
 {
-    if (security == NULL || security->token == NULL) {
+    if (security == NULL || security->token_mgr == NULL) {
         return 0;
     }
 
-    return wingo_dht_token_next_rotate(security->token);
+    return wingo_dht_token_mgr_next_rotate(security->token_mgr);
 }
 
 bool wingo_dht_security_token_needs_rotate(
     const wingo_dht_security_t *security)
 {
-    if (security == NULL || security->token == NULL) {
+    if (security == NULL || security->token_mgr == NULL) {
         return false;
     }
 
-    return wingo_dht_token_needs_rotate(security->token);
+    return wingo_dht_token_mgr_needs_rotate(security->token_mgr);
 }
 
 /* ============================================================================
  * IP VALIDATION
  * ============================================================================ */
 
-/*
- * Validate source address.
- *
- * Checks:
- *   1. Not martian
- *   2. Not blacklisted
- *   3. Rate limited
- *   4. Sybil protected
- */
 wingo_dht_security_result_t wingo_dht_security_validate_source(
     wingo_dht_security_t *security,
     const wingo_addr_t *addr)
@@ -1232,8 +1203,6 @@ wingo_dht_security_result_t wingo_dht_security_validate_source(
  *   - Martian address
  *   - Blacklisted address
  *   - Multicast address
- *
- * If any of these are true, the address is suspicious.
  */
 bool wingo_dht_security_is_spoofed(
     const wingo_dht_security_t *security,
@@ -1243,17 +1212,14 @@ bool wingo_dht_security_is_spoofed(
         return true;
     }
 
-    /* Martian addresses are definitely spoofed */
     if (wingo_dht_security_is_martian(addr)) {
         return true;
     }
 
-    /* Multicast addresses should never be sources */
     if (wingo_dht_security_is_multicast(addr)) {
         return true;
     }
 
-    /* Blacklisted addresses are suspicious */
     if (wingo_dht_security_is_blacklisted_addr(security, addr)) {
         return true;
     }
@@ -1345,7 +1311,7 @@ void wingo_dht_security_print(const wingo_dht_security_t *security, FILE *f)
             security->enable_sybil ? "enabled" : "disabled",
             security->sybil_count);
     fprintf(f, "  Token:         %s\n",
-            security->token != NULL ? "present" : "absent");
+            security->token_mgr != NULL ? "present" : "absent");
     fprintf(f, "\n");
 
     fprintf(f, "  Statistics:\n");
