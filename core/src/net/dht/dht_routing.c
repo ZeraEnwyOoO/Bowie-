@@ -66,6 +66,7 @@
 #include "wingo/net/dht/dht_node.h"
 #include "wingo/log.h"
 #include "wingo/util/time.h"
+#include "wingo/util/time.h"
 
 #include <stdlib.h>
 #include <string.h>
