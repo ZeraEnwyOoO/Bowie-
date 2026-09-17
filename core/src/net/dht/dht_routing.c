@@ -1,4 +1,4 @@
-/*
+ /*
  * Wingo — P2P Internet Sharing Tool (Repo: Bowie)
  * Copyright (C) 2024 ASBM Team
  *
@@ -248,6 +248,8 @@ static void routing_remove_bucket_at(wingo_dht_routing_t *rt,
                                       wingo_size index)
 {
     wingo_dht_bucket_t *bucket;
+    wingo_dht_bucket_t *prev;
+    wingo_dht_bucket_t *next;
 
     if (index >= rt->bucket_count) {
         return;
@@ -255,18 +257,21 @@ static void routing_remove_bucket_at(wingo_dht_routing_t *rt,
 
     bucket = rt->buckets[index];
 
-    /* Unlink from linked list */
-    if (bucket->prev != NULL) {
-        bucket->prev->next = bucket->next;
-    } else {
-        rt->first = bucket->next;
+    /* Get prev/next via accessors */
+    prev = wingo_dht_bucket_prev(bucket);
+    next = wingo_dht_bucket_next(bucket);
+
+    /* Update routing table's first/last */
+    if (prev == NULL) {
+        rt->first = next;
     }
 
-    if (bucket->next != NULL) {
-        bucket->next->prev = bucket->prev;
-    } else {
-        rt->last = bucket->prev;
+    if (next == NULL) {
+        rt->last = prev;
     }
+
+    /* Unlink from linked list */
+    wingo_dht_bucket_unlink(bucket);
 
     /* Shift array */
     if (index < rt->bucket_count - 1) {
