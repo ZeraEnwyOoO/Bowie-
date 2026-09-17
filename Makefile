@@ -34,15 +34,16 @@ LDFLAGS :=
 # PATHS
 # ============================================================================
 
-ROOT_DIR     := $(shell pwd)
-CORE_DIR     := $(ROOT_DIR)/core
-INCLUDE_DIR  := $(CORE_DIR)/include
-SRC_DIR      := $(CORE_DIR)/src
-TEST_DIR     := $(CORE_DIR)/tests/unit
-BUILD_DIR    := $(ROOT_DIR)/build
-OBJ_DIR      := $(BUILD_DIR)/obj
-LIB_DIR      := $(BUILD_DIR)/lib
-BIN_DIR      := $(BUILD_DIR)/bin
+ROOT_DIR       := $(shell pwd)
+CORE_DIR       := $(ROOT_DIR)/core
+INCLUDE_DIR    := $(CORE_DIR)/include
+SRC_DIR        := $(CORE_DIR)/src
+TEST_DIR       := $(CORE_DIR)/tests/unit
+PLATFORMS_DIR  := $(ROOT_DIR)/platforms
+BUILD_DIR      := $(ROOT_DIR)/build
+OBJ_DIR        := $(BUILD_DIR)/obj
+LIB_DIR        := $(BUILD_DIR)/lib
+BIN_DIR        := $(BUILD_DIR)/bin
 
 # ============================================================================
 # PHASE 1: FOUNDATION
@@ -69,11 +70,14 @@ SRCS_PHASE2 := \
 	$(SRC_DIR)/core/thread.c
 
 # ============================================================================
-# PHASE 3: PLATFORM  (actual location: core/src/platform.c)
+# PHASE 3: PLATFORM
+#
+# NOTE: Platform sources live in platforms/ directory, NOT core/src/.
+#       We SKIP them for now because Phase 4 (Network) does not depend on them.
+#       Platform will be added later when needed.
 # ============================================================================
 
-SRCS_PHASE3 := \
-	$(SRC_DIR)/platform.c
+SRCS_PHASE3 :=
 
 # ============================================================================
 # PHASE 4: NETWORK
@@ -240,6 +244,6 @@ help:
 	@echo "Sources:"
 	@echo "  Phase 1: $(words $(SRCS_PHASE1)) files"
 	@echo "  Phase 2: $(words $(SRCS_PHASE2)) files"
-	@echo "  Phase 3: $(words $(SRCS_PHASE3)) files"
+	@echo "  Phase 3: $(words $(SRCS_PHASE3)) files (SKIPPED)"
 	@echo "  Phase 4: $(words $(SRCS_PHASE4)) files"
 	@echo "  Total:   $(words $(SRCS)) files"
