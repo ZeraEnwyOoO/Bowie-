@@ -102,6 +102,17 @@
  */
 #define WINGO_DHT_DEFAULT_PORT  6881
 
+/*
+ * DHT bucket constants.
+ *
+ * NOTE: These are also defined in dht_bucket.h, but we
+ *       define them here so that dht_config.h can use them
+ *       without pulling in dht_bucket.h (which has heavy
+ *       dependencies on dht_node.h and socket.h).
+ */
+#define WINGO_DHT_BUCKET_SIZE       8
+#define WINGO_DHT_BUCKET_MIN_SIZE   4
+
 /* ============================================================================
  * DHT ID TYPES
  * ============================================================================ */
