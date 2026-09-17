@@ -1,4 +1,4 @@
-/*
+ /*
  * Wingo — P2P Internet Sharing Tool (Repo: Bowie)
  * Copyright (C) 2024 ASBM Team
  *
@@ -28,44 +28,13 @@
  *
  * It contains ONLY:
  *   - Constants (ID size, token size, limits)
- *   - Types (ID, info hash, token, state)
+ *   - Types (ID, info hash, token VALUE, state)
  *   - Opaque handle (wingo_dht_t)
  *
  * It does NOT contain:
  *   - API functions (those are in dht.h)
  *   - Configuration (that's in dht_config.h)
- *   - Subsystem headers (node, bucket, routing, ...)
- *
- * This separation allows subsystem headers to include ONLY the types
- * they need, without pulling in the full DHT API or unnecessary
- * dependencies (like peer.h).
- *
- * Architecture:
- *
- *   ┌─────────────────────────────────────────────────────────────┐
- *   │                    DHT TYPE HIERARCHY                       │
- *   │                                                             │
- *   │   dht_types.h  ← គ្មាន dependency ក្រៅពី common + error     │
- *   │       │                                                     │
- *   │       ├── dht_id_t          (160-bit node ID)              │
- *   │       ├── info_hash_t       (160-bit info hash)            │
- *   │       ├── dht_token_t       (8-byte token)                 │
- *   │       ├── dht_state_t       (lifecycle state)              │
- *   │       └── dht_t             (opaque handle)                │
- *   │                                                             │
- *   │   dht.h          ← API + config                             │
- *   │   dht_config.h   ← config only                              │
- *   │   dht_node.h     ← node only                                │
- *   │   dht_bucket.h   ← bucket only                              │
- *   │   dht_routing.h  ← routing only                             │
- *   │   dht_search.h   ← search only                              │
- *   │   dht_storage.h  ← storage only                             │
- *   │   dht_message.h  ← message only                             │
- *   │   dht_token.h    ← token only                               │
- *   │   dht_security.h ← security only                            │
- *   │   dht_bencode.h  ← bencode only                             │
- *   │                                                             │
- *   └─────────────────────────────────────────────────────────────┘
+ *   - Token MANAGER (that's in dht_token.h as wingo_dht_token_mgr_t)
  *
  * ============================================================================
  */
@@ -93,6 +62,11 @@
 #define WINGO_DHT_TOKEN_SIZE    8
 
 /*
+ * DHT token manager secret size (16 bytes).
+ */
+#define WINGO_DHT_TOKEN_SECRET_SIZE 16
+
+/*
  * Maximum bootstrap nodes.
  */
 #define WINGO_DHT_MAX_BOOTSTRAP 8
@@ -107,8 +81,7 @@
  *
  * NOTE: These are also defined in dht_bucket.h, but we
  *       define them here so that dht_config.h can use them
- *       without pulling in dht_bucket.h (which has heavy
- *       dependencies on dht_node.h and socket.h).
+ *       without pulling in dht_bucket.h.
  */
 #define WINGO_DHT_BUCKET_SIZE       8
 #define WINGO_DHT_BUCKET_MIN_SIZE   4
@@ -119,12 +92,6 @@
 
 /*
  * DHT ID (160-bit).
- *
- * This is the fundamental identifier in the DHT.
- * It is used for:
- *   - Node IDs
- *   - Info hashes
- *   - Distance calculation
  */
 typedef struct {
     wingo_u8 bytes[WINGO_DHT_ID_SIZE];
@@ -132,22 +99,18 @@ typedef struct {
 
 /*
  * Info hash (160-bit).
- *
- * An info hash identifies a resource (e.g., a peer group)
- * in the DHT. It has the same size as a DHT ID.
  */
 typedef wingo_dht_id_t wingo_info_hash_t;
 
 /* ============================================================================
- * DHT TOKEN TYPE
+ * DHT TOKEN VALUE TYPE
  * ============================================================================ */
 
 /*
- * DHT token (8 bytes).
+ * DHT token VALUE (8 bytes).
  *
- * A token is a short opaque value that proves a node has
- * previously contacted us. It is used to prevent unsolicited
- * announce_peer requests.
+ * NOTE: This is a token VALUE, not a token MANAGER.
+ *       The token manager is wingo_dht_token_mgr_t (in dht_token.h).
  */
 typedef struct {
     wingo_u8 bytes[WINGO_DHT_TOKEN_SIZE];
@@ -161,11 +124,11 @@ typedef struct {
  * DHT state.
  */
 typedef enum {
-    WINGO_DHT_STATE_STOPPED  = 0,   /* Not started */
-    WINGO_DHT_STATE_STARTING = 1,   /* Starting */
-    WINGO_DHT_STATE_RUNNING  = 2,   /* Running */
-    WINGO_DHT_STATE_STOPPING = 3,   /* Stopping */
-    WINGO_DHT_STATE_ERROR    = 4,   /* Error */
+    WINGO_DHT_STATE_STOPPED  = 0,
+    WINGO_DHT_STATE_STARTING = 1,
+    WINGO_DHT_STATE_RUNNING  = 2,
+    WINGO_DHT_STATE_STOPPING = 3,
+    WINGO_DHT_STATE_ERROR    = 4,
 } wingo_dht_state_t;
 
 /* ============================================================================
@@ -174,8 +137,6 @@ typedef enum {
 
 /*
  * DHT handle.
- *
- * This is an opaque type. Use wingo_dht_*() functions.
  */
 typedef struct wingo_dht wingo_dht_t;
 
