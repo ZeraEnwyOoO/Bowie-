@@ -62,7 +62,7 @@
 #include "wingo/common.h"
 #include "wingo/error.h"
 #include "wingo/net/socket.h"
-#include "wingo/net/dht.h"
+#include "wingo/net/dht/dht_types.h"
 
 /* ============================================================================
  * DHT SECURITY CONSTANTS
