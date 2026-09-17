@@ -315,12 +315,76 @@ void wingo_dht_bucket_clear_cached(wingo_dht_bucket_t *bucket);
  */
 bool wingo_dht_bucket_has_cached(const wingo_dht_bucket_t *bucket);
 
+ /* ============================================================================
+ * BUCKET LINKED LIST (for routing table)
+ * ============================================================================ */
+
+/*
+ * Get next bucket in linked list.
+ */
+wingo_dht_bucket_t *wingo_dht_bucket_next(const wingo_dht_bucket_t *bucket)
+{
+    if (bucket == NULL) {
+        return NULL;
+    }
+
+    return bucket->next;
+}
+
+/*
+ * Get previous bucket in linked list.
+ */
+wingo_dht_bucket_t *wingo_dht_bucket_prev(const wingo_dht_bucket_t *bucket)
+{
+    if (bucket == NULL) {
+        return NULL;
+    }
+
+    return bucket->prev;
+}
+
+/*
+ * Link two buckets together.
+ */
+void wingo_dht_bucket_link(wingo_dht_bucket_t *bucket,
+                            wingo_dht_bucket_t *next)
+{
+    if (bucket == NULL) {
+        return;
+    }
+
+    bucket->next = next;
+    if (next != NULL) {
+        next->prev = bucket;
+    }
+}
+
+/*
+ * Unlink bucket from linked list.
+ */
+void wingo_dht_bucket_unlink(wingo_dht_bucket_t *bucket)
+{
+    if (bucket == NULL) {
+        return;
+    }
+
+    if (bucket->prev != NULL) {
+        bucket->prev->next = bucket->next;
+    }
+
+    if (bucket->next != NULL) {
+        bucket->next->prev = bucket->prev;
+    }
+
+    bucket->prev = NULL;
+    bucket->next = NULL;
+}
+
 /* ============================================================================
  * BUCKET SPLIT
  * ============================================================================ */
 
-/*
- * Calculate bucket middle ID.
+* Calculate bucket middle ID.
  *
  * @param bucket    Bucket
  * @param out       Output middle ID
