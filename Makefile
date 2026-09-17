@@ -22,7 +22,7 @@ PROJECT_VERSION := 0.1.0
 
 CC      := gcc
 AR      := ar
- CFLAGS  := -std=c11 -Wall -Wextra -Wno-unused-parameter \
+CFLAGS  := -std=c11 -Wall -Wextra -Wno-unused-parameter \
            -Wno-unused-function -Wno-format-truncation \
            -Wno-stringop-truncation -fPIC -O0 -g \
            -D_POSIX_C_SOURCE=200809L \
@@ -69,11 +69,11 @@ SRCS_PHASE2 := \
 	$(SRC_DIR)/core/thread.c
 
 # ============================================================================
-# PHASE 3: PLATFORM
+# PHASE 3: PLATFORM  (actual location: core/src/platform.c)
 # ============================================================================
 
 SRCS_PHASE3 := \
-	$(SRC_DIR)/platform/platform.c
+	$(SRC_DIR)/platform.c
 
 # ============================================================================
 # PHASE 4: NETWORK
@@ -119,13 +119,6 @@ TESTS := \
 	test_dht_bucket \
 	test_dht_routing \
 	test_dht_token
-
-TEST_SRCS := \
-	$(TEST_DIR)/net/dht/test_dht_bencode.c \
-	$(TEST_DIR)/net/dht/test_dht_node.c \
-	$(TEST_DIR)/net/dht/test_dht_bucket.c \
-	$(TEST_DIR)/net/dht/test_dht_routing.c \
-	$(TEST_DIR)/net/dht/test_dht_token.c
 
 TEST_BINS := $(patsubst %,$(BIN_DIR)/%,$(TESTS))
 
@@ -215,7 +208,7 @@ test: tests
 	@echo "  All tests passed!"
 	@echo "========================================="
 
-# ----- Compile-only (check errors) -----
+# ----- Compile-only -----
 compile-all: dirs $(OBJS)
 	@echo ""
 	@echo "========================================="
