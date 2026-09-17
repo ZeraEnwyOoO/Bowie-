@@ -1,4 +1,4 @@
-/*
+ /*
  * Wingo — P2P Internet Sharing Tool (Repo: Bowie)
  * Copyright (C) 2024 ASBM Team
  *
@@ -59,6 +59,30 @@
 #include <stdio.h>
 
 /* ============================================================================
+ * INTERNAL CONSTANTS
+ * ============================================================================ */
+
+/*
+ * Initial peer array capacity.
+ */
+#define PEER_INIT_CAPACITY      16
+
+/*
+ * Growth factor.
+ */
+#define PEER_GROW_FACTOR        2
+
+/*
+ * Default name.
+ */
+#define PEER_DEFAULT_NAME       "peer"
+
+/*
+ * Connect timeout (10 seconds).
+ */
+#define WINGO_PEER_CONNECT_TIMEOUT_MS  10000
+
+/* ============================================================================
  * INTERNAL STRUCTURES
  * ============================================================================ */
 
@@ -67,7 +91,7 @@
  */
 struct wingo_peer {
     /* ----- Identity ----- */
-    wingo_id_t          id;
+    wingo_id            id;
     wingo_addr_t       *addr;
 
     /* ----- Role & State ----- */
@@ -110,25 +134,6 @@ struct wingo_peer_mgr {
     /* ----- Blacklist ----- */
     wingo_hashmap_bin_t *blacklist;
 };
-
-/* ============================================================================
- * INTERNAL CONSTANTS
- * ============================================================================ */
-
-/*
- * Initial peer array capacity.
- */
-#define PEER_INIT_CAPACITY      16
-
-/*
- * Growth factor.
- */
-#define PEER_GROW_FACTOR        2
-
-/*
- * Default name.
- */
-#define PEER_DEFAULT_NAME       "peer"
 
 /* ============================================================================
  * INTERNAL HELPERS — PEER ARRAY
@@ -217,7 +222,7 @@ static void mgr_remove_at(wingo_peer_mgr_t *mgr, wingo_size index)
  * Check if ID is blacklisted.
  */
 static bool mgr_is_blacklisted(const wingo_peer_mgr_t *mgr,
-                                const wingo_id_t *id)
+                                const wingo_id *id)
 {
     if (mgr == NULL || mgr->blacklist == NULL || id == NULL) {
         return false;
@@ -230,7 +235,7 @@ static bool mgr_is_blacklisted(const wingo_peer_mgr_t *mgr,
  * Add ID to blacklist.
  */
 static wingo_error_t mgr_blacklist_add(wingo_peer_mgr_t *mgr,
-                                        const wingo_id_t *id)
+                                        const wingo_id *id)
 {
     if (mgr == NULL || mgr->blacklist == NULL || id == NULL) {
         return WINGO_ERR_INVALID_ARG;
@@ -250,7 +255,7 @@ static wingo_error_t mgr_blacklist_add(wingo_peer_mgr_t *mgr,
  * Remove ID from blacklist.
  */
 static wingo_error_t mgr_blacklist_remove(wingo_peer_mgr_t *mgr,
-                                           const wingo_id_t *id)
+                                           const wingo_id *id)
 {
     if (mgr == NULL || mgr->blacklist == NULL || id == NULL) {
         return WINGO_ERR_INVALID_ARG;
@@ -272,7 +277,7 @@ static wingo_error_t mgr_blacklist_remove(wingo_peer_mgr_t *mgr,
 /*
  * Allocate a new peer.
  */
-static wingo_peer_t *peer_alloc(const wingo_id_t *id,
+static wingo_peer_t *peer_alloc(const wingo_id *id,
                                  const wingo_addr_t *addr,
                                  wingo_peer_role_t role)
 {
@@ -285,9 +290,9 @@ static wingo_peer_t *peer_alloc(const wingo_id_t *id,
 
     /* Copy ID */
     if (id != NULL) {
-        memcpy(&peer->id, id, sizeof(wingo_id_t));
+        memcpy(&peer->id, id, sizeof(wingo_id));
     } else {
-        memset(&peer->id, 0, sizeof(wingo_id_t));
+        memset(&peer->id, 0, sizeof(wingo_id));
     }
 
     /* Copy address */
@@ -442,7 +447,7 @@ void wingo_peer_mgr_free(wingo_peer_mgr_t *mgr)
  * Add a peer to the manager.
  */
 wingo_peer_t *wingo_peer_mgr_add(wingo_peer_mgr_t *mgr,
-                                  const wingo_id_t *id,
+                                  const wingo_id *id,
                                   const wingo_addr_t *addr,
                                   wingo_peer_role_t role)
 {
@@ -510,7 +515,7 @@ wingo_peer_t *wingo_peer_mgr_add(wingo_peer_mgr_t *mgr,
  * Remove a peer from the manager.
  */
 wingo_error_t wingo_peer_mgr_remove(wingo_peer_mgr_t *mgr,
-                                     const wingo_id_t *id)
+                                     const wingo_id *id)
 {
     wingo_peer_t *peer;
     int index;
@@ -547,7 +552,7 @@ wingo_error_t wingo_peer_mgr_remove(wingo_peer_mgr_t *mgr,
  * Find a peer by ID.
  */
 wingo_peer_t *wingo_peer_mgr_find(wingo_peer_mgr_t *mgr,
-                                   const wingo_id_t *id)
+                                   const wingo_id *id)
 {
     void *value;
 
@@ -638,7 +643,7 @@ void wingo_peer_mgr_clear(wingo_peer_mgr_t *mgr)
 /*
  * Get peer ID.
  */
-const wingo_id_t *wingo_peer_id(const wingo_peer_t *peer)
+const wingo_id *wingo_peer_id(const wingo_peer_t *peer)
 {
     if (peer == NULL) {
         return NULL;
@@ -1150,7 +1155,7 @@ wingo_size wingo_peer_mgr_expire(wingo_peer_mgr_t *mgr, wingo_i64 timeout_s)
  * Blacklist a peer.
  */
 wingo_error_t wingo_peer_mgr_blacklist(wingo_peer_mgr_t *mgr,
-                                        const wingo_id_t *id)
+                                        const wingo_id *id)
 {
     wingo_peer_t *peer;
     wingo_error_t rc;
@@ -1186,7 +1191,7 @@ wingo_error_t wingo_peer_mgr_blacklist(wingo_peer_mgr_t *mgr,
  * Unblacklist a peer.
  */
 wingo_error_t wingo_peer_mgr_unblacklist(wingo_peer_mgr_t *mgr,
-                                          const wingo_id_t *id)
+                                          const wingo_id *id)
 {
     wingo_peer_t *peer;
     wingo_error_t rc;
@@ -1218,7 +1223,7 @@ wingo_error_t wingo_peer_mgr_unblacklist(wingo_peer_mgr_t *mgr,
  * Check if peer is blacklisted.
  */
 bool wingo_peer_mgr_is_blacklisted(const wingo_peer_mgr_t *mgr,
-                                    const wingo_id_t *id)
+                                    const wingo_id *id)
 {
     if (mgr == NULL || id == NULL) {
         return false;
@@ -1297,7 +1302,7 @@ const char *wingo_peer_role_name(wingo_peer_role_t role)
 /*
  * Convert ID to hex (local helper).
  */
-static void id_to_hex_local(const wingo_id_t *id, char *buf)
+static void id_to_hex_local(const wingo_id *id, char *buf)
 {
     static const char hex[] = "0123456789abcdef";
     wingo_size i;
