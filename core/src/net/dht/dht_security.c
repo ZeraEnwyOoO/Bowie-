@@ -1,4 +1,4 @@
-/*
+ /*
  * Wingo — P2P Internet Sharing Tool (Repo: Bowie)
  * Copyright (C) 2024 ASBM Team
  *
@@ -21,11 +21,10 @@
  *
  * This file provides:
  *   - Blacklist (node ID + address)
- *   - Rate limiting (per IP, per node)
+ *   - Rate limiting (per IP)
  *   - Martian address detection
  *   - Sybil protection
  *   - Token validation (delegates to dht_token)
- *   - IP validation
  *
  * NOTE: Token management is implemented in dht_token.c.
  *       This file delegates token operations to dht_token.
@@ -51,33 +50,33 @@
 /*
  * Blacklist entry.
  */
-typedef struct {
-    wingo_dht_id_t              id;             /* Node ID (may be zero) */
-    wingo_addr_t               *addr;           /* Address (may be NULL) */
+typedef struct blacklist_entry {
+    wingo_dht_id_t              id;
+    wingo_addr_t               *addr;
     wingo_dht_blacklist_reason_t reason;
-    wingo_i64                   expires_at;     /* Unix timestamp */
+    wingo_i64                   expires_at;
     struct blacklist_entry     *next;
 } blacklist_entry_t;
 
 /*
  * Rate limit entry.
  */
-typedef struct {
-    wingo_addr_t   *addr;           /* Address */
-    wingo_u64       tokens;         /* Token bucket */
-    wingo_i64       last_refill;    /* Last refill time */
-    wingo_u64       message_count;  /* Messages in current window */
-    wingo_i64       window_start;   /* Window start time */
-    struct rate_entry *next;
+typedef struct rate_entry {
+    wingo_addr_t           *addr;
+    wingo_u64               tokens;
+    wingo_i64               last_refill;
+    wingo_u64               message_count;
+    wingo_i64               window_start;
+    struct rate_entry      *next;
 } rate_entry_t;
 
 /*
  * Sybil subnet entry.
  */
-typedef struct {
-    wingo_u32       subnet;         /* /24 for IPv4 */
-    wingo_size      count;          /* Nodes in subnet */
-    struct sybil_entry *next;
+typedef struct sybil_entry {
+    wingo_u32               subnet;
+    wingo_size              count;
+    struct sybil_entry     *next;
 } sybil_entry_t;
 
 /*
@@ -85,17 +84,17 @@ typedef struct {
  */
 struct wingo_dht_security {
     /* ----- Blacklist ----- */
-    blacklist_entry_t          *blacklist_head;
+    struct blacklist_entry     *blacklist_head;
     wingo_size                  blacklist_count;
     wingo_size                  max_blacklist;
 
     /* ----- Rate limiting ----- */
-    rate_entry_t               *rate_head;
+    struct rate_entry          *rate_head;
     wingo_size                  rate_count;
     bool                        enable_rate_limit;
 
     /* ----- Sybil protection ----- */
-    sybil_entry_t              *sybil_head;
+    struct sybil_entry         *sybil_head;
     wingo_size                  sybil_count;
     bool                        enable_sybil;
 
@@ -110,24 +109,8 @@ struct wingo_dht_security {
  * INTERNAL CONSTANTS
  * ============================================================================ */
 
-/*
- * Rate limit refill interval (seconds).
- */
-#define RATE_REFILL_INTERVAL    1
-
-/*
- * Rate limit max entries.
- */
 #define RATE_MAX_ENTRIES        4096
-
-/*
- * Sybil subnet size (IPv4 /24).
- */
 #define SYBIL_SUBNET_SIZE       256
-
-/*
- * Sybil max nodes per subnet.
- */
 #define SYBIL_MAX_PER_SUBNET    4
 
 /* ============================================================================
@@ -136,8 +119,6 @@ struct wingo_dht_security {
 
 /*
  * Get IPv4 subnet (/24) from address.
- *
- * Returns 0 if not IPv4.
  */
 static wingo_u32 addr_to_subnet(const wingo_addr_t *addr)
 {
@@ -163,9 +144,6 @@ static wingo_u32 addr_to_subnet(const wingo_addr_t *addr)
  * INTERNAL HELPERS — BLACKLIST
  * ============================================================================ */
 
-/*
- * Find blacklist entry by ID.
- */
 static blacklist_entry_t *blacklist_find_id(wingo_dht_security_t *security,
                                              const wingo_dht_id_t *id)
 {
@@ -176,7 +154,8 @@ static blacklist_entry_t *blacklist_find_id(wingo_dht_security_t *security,
     }
 
     for (entry = security->blacklist_head; entry != NULL; entry = entry->next) {
-        if (memcmp(entry->id.bytes, id->bytes, WINGO_DHT_ID_SIZE) == 0) {
+        if (memcmp(entry->id.bytes, id->bytes, WINGO_DHT_ID_SIZE) == 0 &&
+            entry->addr == NULL) {
             return entry;
         }
     }
@@ -184,9 +163,6 @@ static blacklist_entry_t *blacklist_find_id(wingo_dht_security_t *security,
     return NULL;
 }
 
-/*
- * Find blacklist entry by address.
- */
 static blacklist_entry_t *blacklist_find_addr(wingo_dht_security_t *security,
                                                const wingo_addr_t *addr)
 {
@@ -205,9 +181,6 @@ static blacklist_entry_t *blacklist_find_addr(wingo_dht_security_t *security,
     return NULL;
 }
 
-/*
- * Add blacklist entry.
- */
 static wingo_error_t blacklist_add(wingo_dht_security_t *security,
                                     const wingo_dht_id_t *id,
                                     const wingo_addr_t *addr,
@@ -230,14 +203,12 @@ static wingo_error_t blacklist_add(wingo_dht_security_t *security,
         return WINGO_ERR_NOMEM;
     }
 
-    /* Copy ID */
     if (id != NULL) {
         memcpy(&entry->id, id, sizeof(wingo_dht_id_t));
     } else {
         memset(&entry->id, 0, sizeof(wingo_dht_id_t));
     }
 
-    /* Copy address */
     if (addr != NULL) {
         entry->addr = wingo_addr_copy(addr);
         if (entry->addr == NULL) {
@@ -250,14 +221,12 @@ static wingo_error_t blacklist_add(wingo_dht_security_t *security,
 
     entry->reason = reason;
 
-    /* Expiry */
     if (duration_s <= 0) {
         duration_s = WINGO_DHT_SECURITY_BLACKLIST_TTL;
     }
 
     entry->expires_at = wingo_time_now() + duration_s;
 
-    /* Add to list */
     entry->next = security->blacklist_head;
     security->blacklist_head = entry;
     security->blacklist_count++;
@@ -265,9 +234,6 @@ static wingo_error_t blacklist_add(wingo_dht_security_t *security,
     return WINGO_SUCCESS;
 }
 
-/*
- * Remove blacklist entry.
- */
 static void blacklist_remove(wingo_dht_security_t *security,
                               blacklist_entry_t *prev,
                               blacklist_entry_t *entry)
@@ -294,9 +260,6 @@ static void blacklist_remove(wingo_dht_security_t *security,
  * INTERNAL HELPERS — RATE LIMIT
  * ============================================================================ */
 
-/*
- * Find rate entry by address.
- */
 static rate_entry_t *rate_find(wingo_dht_security_t *security,
                                 const wingo_addr_t *addr)
 {
@@ -315,9 +278,6 @@ static rate_entry_t *rate_find(wingo_dht_security_t *security,
     return NULL;
 }
 
-/*
- * Get or create rate entry.
- */
 static rate_entry_t *rate_get_or_create(wingo_dht_security_t *security,
                                          const wingo_addr_t *addr)
 {
@@ -355,9 +315,6 @@ static rate_entry_t *rate_get_or_create(wingo_dht_security_t *security,
     return entry;
 }
 
-/*
- * Refill token bucket.
- */
 static void rate_refill(rate_entry_t *entry, wingo_i64 now)
 {
     wingo_i64 elapsed;
@@ -371,13 +328,11 @@ static void rate_refill(rate_entry_t *entry, wingo_i64 now)
         return;
     }
 
-    /* Refill: 1 token per second per IP */
-    if (elapsed > 0) {
+    {
         wingo_u64 refill = (wingo_u64)elapsed;
 
         entry->tokens += refill;
 
-        /* Cap at max */
         if (entry->tokens > WINGO_DHT_SECURITY_RATE_PER_IP) {
             entry->tokens = WINGO_DHT_SECURITY_RATE_PER_IP;
         }
@@ -390,9 +345,6 @@ static void rate_refill(rate_entry_t *entry, wingo_i64 now)
  * INTERNAL HELPERS — SYBIL
  * ============================================================================ */
 
-/*
- * Find Sybil entry by subnet.
- */
 static sybil_entry_t *sybil_find(wingo_dht_security_t *security,
                                   wingo_u32 subnet)
 {
@@ -411,9 +363,6 @@ static sybil_entry_t *sybil_find(wingo_dht_security_t *security,
     return NULL;
 }
 
-/*
- * Get or create Sybil entry.
- */
 static sybil_entry_t *sybil_get_or_create(wingo_dht_security_t *security,
                                            wingo_u32 subnet)
 {
@@ -443,9 +392,6 @@ static sybil_entry_t *sybil_get_or_create(wingo_dht_security_t *security,
  * DHT SECURITY LIFECYCLE
  * ============================================================================ */
 
-/*
- * Create a new DHT security instance.
- */
 wingo_dht_security_t *wingo_dht_security_new(wingo_size max_blacklist,
                                               bool enable_rate_limit,
                                               bool enable_sybil)
@@ -457,7 +403,6 @@ wingo_dht_security_t *wingo_dht_security_new(wingo_size max_blacklist,
         return NULL;
     }
 
-    /* Set config */
     if (max_blacklist == 0) {
         max_blacklist = WINGO_DHT_SECURITY_MAX_BLACKLIST;
     }
@@ -466,7 +411,6 @@ wingo_dht_security_t *wingo_dht_security_new(wingo_size max_blacklist,
     security->enable_rate_limit = enable_rate_limit;
     security->enable_sybil = enable_sybil;
 
-    /* Create token manager */
     security->token = wingo_dht_token_new();
     if (security->token == NULL) {
         free(security);
@@ -481,9 +425,6 @@ wingo_dht_security_t *wingo_dht_security_new(wingo_size max_blacklist,
     return security;
 }
 
-/*
- * Free a DHT security instance.
- */
 void wingo_dht_security_free(wingo_dht_security_t *security)
 {
     blacklist_entry_t *entry, *next;
@@ -494,7 +435,6 @@ void wingo_dht_security_free(wingo_dht_security_t *security)
         return;
     }
 
-    /* Free blacklist */
     entry = security->blacklist_head;
     while (entry != NULL) {
         next = entry->next;
@@ -505,7 +445,6 @@ void wingo_dht_security_free(wingo_dht_security_t *security)
         entry = next;
     }
 
-    /* Free rate limits */
     rate = security->rate_head;
     while (rate != NULL) {
         rate_next = rate->next;
@@ -516,7 +455,6 @@ void wingo_dht_security_free(wingo_dht_security_t *security)
         rate = rate_next;
     }
 
-    /* Free Sybil entries */
     sybil = security->sybil_head;
     while (sybil != NULL) {
         sybil_next = sybil->next;
@@ -524,7 +462,6 @@ void wingo_dht_security_free(wingo_dht_security_t *security)
         sybil = sybil_next;
     }
 
-    /* Free token manager */
     if (security->token != NULL) {
         wingo_dht_token_free(security->token);
     }
@@ -532,9 +469,6 @@ void wingo_dht_security_free(wingo_dht_security_t *security)
     free(security);
 }
 
-/*
- * Reset security state.
- */
 wingo_error_t wingo_dht_security_reset(wingo_dht_security_t *security)
 {
     blacklist_entry_t *entry, *next;
@@ -545,7 +479,6 @@ wingo_error_t wingo_dht_security_reset(wingo_dht_security_t *security)
         return WINGO_ERR_INVALID_ARG;
     }
 
-    /* Free blacklist */
     entry = security->blacklist_head;
     while (entry != NULL) {
         next = entry->next;
@@ -558,7 +491,6 @@ wingo_error_t wingo_dht_security_reset(wingo_dht_security_t *security)
     security->blacklist_head = NULL;
     security->blacklist_count = 0;
 
-    /* Free rate limits */
     rate = security->rate_head;
     while (rate != NULL) {
         rate_next = rate->next;
@@ -571,7 +503,6 @@ wingo_error_t wingo_dht_security_reset(wingo_dht_security_t *security)
     security->rate_head = NULL;
     security->rate_count = 0;
 
-    /* Free Sybil entries */
     sybil = security->sybil_head;
     while (sybil != NULL) {
         sybil_next = sybil->next;
@@ -581,7 +512,11 @@ wingo_error_t wingo_dht_security_reset(wingo_dht_security_t *security)
     security->sybil_head = NULL;
     security->sybil_count = 0;
 
-    /* Reset stats */
+    /* Reset token manager too */
+    if (security->token != NULL) {
+        wingo_dht_token_reset(security->token);
+    }
+
     memset(&security->stats, 0, sizeof(security->stats));
 
     return WINGO_SUCCESS;
@@ -591,9 +526,6 @@ wingo_error_t wingo_dht_security_reset(wingo_dht_security_t *security)
  * BLACKLIST
  * ============================================================================ */
 
-/*
- * Add a node to blacklist.
- */
 wingo_error_t wingo_dht_security_blacklist_add(wingo_dht_security_t *security,
                                                 const wingo_dht_id_t *id,
                                                 wingo_dht_blacklist_reason_t reason,
@@ -603,7 +535,6 @@ wingo_error_t wingo_dht_security_blacklist_add(wingo_dht_security_t *security,
         return WINGO_ERR_INVALID_ARG;
     }
 
-    /* Check if already exists */
     if (blacklist_find_id(security, id) != NULL) {
         return WINGO_SUCCESS;
     }
@@ -611,9 +542,6 @@ wingo_error_t wingo_dht_security_blacklist_add(wingo_dht_security_t *security,
     return blacklist_add(security, id, NULL, reason, duration_s);
 }
 
-/*
- * Add an address to blacklist.
- */
 wingo_error_t wingo_dht_security_blacklist_add_addr(
     wingo_dht_security_t *security,
     const wingo_addr_t *addr,
@@ -624,7 +552,6 @@ wingo_error_t wingo_dht_security_blacklist_add_addr(
         return WINGO_ERR_INVALID_ARG;
     }
 
-    /* Check if already exists */
     if (blacklist_find_addr(security, addr) != NULL) {
         return WINGO_SUCCESS;
     }
@@ -632,9 +559,6 @@ wingo_error_t wingo_dht_security_blacklist_add_addr(
     return blacklist_add(security, NULL, addr, reason, duration_s);
 }
 
-/*
- * Remove a node from blacklist.
- */
 wingo_error_t wingo_dht_security_blacklist_remove(
     wingo_dht_security_t *security,
     const wingo_dht_id_t *id)
@@ -658,9 +582,6 @@ wingo_error_t wingo_dht_security_blacklist_remove(
     return WINGO_ERR_NOT_FOUND;
 }
 
-/*
- * Remove an address from blacklist.
- */
 wingo_error_t wingo_dht_security_blacklist_remove_addr(
     wingo_dht_security_t *security,
     const wingo_addr_t *addr)
@@ -683,9 +604,6 @@ wingo_error_t wingo_dht_security_blacklist_remove_addr(
     return WINGO_ERR_NOT_FOUND;
 }
 
-/*
- * Check if a node is blacklisted.
- */
 bool wingo_dht_security_is_blacklisted(const wingo_dht_security_t *security,
                                         const wingo_dht_id_t *id)
 {
@@ -698,7 +616,6 @@ bool wingo_dht_security_is_blacklisted(const wingo_dht_security_t *security,
     for (entry = security->blacklist_head; entry != NULL; entry = entry->next) {
         if (memcmp(entry->id.bytes, id->bytes, WINGO_DHT_ID_SIZE) == 0 &&
             entry->addr == NULL) {
-            /* Check expiry */
             if (entry->expires_at > 0 &&
                 wingo_time_now() >= entry->expires_at) {
                 return false;
@@ -710,9 +627,6 @@ bool wingo_dht_security_is_blacklisted(const wingo_dht_security_t *security,
     return false;
 }
 
-/*
- * Check if an address is blacklisted.
- */
 bool wingo_dht_security_is_blacklisted_addr(
     const wingo_dht_security_t *security,
     const wingo_addr_t *addr)
@@ -725,7 +639,6 @@ bool wingo_dht_security_is_blacklisted_addr(
 
     for (entry = security->blacklist_head; entry != NULL; entry = entry->next) {
         if (entry->addr != NULL && wingo_addr_cmp(entry->addr, addr) == 0) {
-            /* Check expiry */
             if (entry->expires_at > 0 &&
                 wingo_time_now() >= entry->expires_at) {
                 return false;
@@ -737,9 +650,6 @@ bool wingo_dht_security_is_blacklisted_addr(
     return false;
 }
 
-/*
- * Get blacklist entry count.
- */
 wingo_size wingo_dht_security_blacklist_count(
     const wingo_dht_security_t *security)
 {
@@ -750,9 +660,6 @@ wingo_size wingo_dht_security_blacklist_count(
     return security->blacklist_count;
 }
 
-/*
- * Clear blacklist.
- */
 void wingo_dht_security_blacklist_clear(wingo_dht_security_t *security)
 {
     blacklist_entry_t *entry, *next;
@@ -775,9 +682,6 @@ void wingo_dht_security_blacklist_clear(wingo_dht_security_t *security)
     security->blacklist_count = 0;
 }
 
-/*
- * Expire blacklist entries.
- */
 wingo_size wingo_dht_security_blacklist_expire(
     wingo_dht_security_t *security)
 {
@@ -800,7 +704,6 @@ wingo_size wingo_dht_security_blacklist_expire(
         if (entry->expires_at > 0 && now >= entry->expires_at) {
             blacklist_remove(security, prev, entry);
             expired++;
-            /* prev stays the same */
         } else {
             prev = entry;
         }
@@ -816,6 +719,8 @@ wingo_size wingo_dht_security_blacklist_expire(
 
 /*
  * Check rate limit for an address.
+ *
+ * Uses token bucket: 1 token per second, max WINGO_DHT_SECURITY_RATE_PER_IP.
  */
 wingo_dht_security_result_t wingo_dht_security_rate_limit_check(
     wingo_dht_security_t *security,
@@ -835,19 +740,17 @@ wingo_dht_security_result_t wingo_dht_security_rate_limit_check(
     now = wingo_time_now();
     entry = rate_get_or_create(security, addr);
     if (entry == NULL) {
-        return WINGO_DHT_SECURITY_OK;  /* Can't track → allow */
+        /* Can't track → allow (fail open) */
+        return WINGO_DHT_SECURITY_OK;
     }
 
-    /* Refill tokens */
     rate_refill(entry, now);
 
-    /* Check token bucket */
     if (entry->tokens == 0) {
         security->stats.packets_rate_limited++;
         return WINGO_DHT_SECURITY_RATE_LIMITED;
     }
 
-    /* Consume one token */
     entry->tokens--;
     entry->message_count++;
 
@@ -856,19 +759,22 @@ wingo_dht_security_result_t wingo_dht_security_rate_limit_check(
 
 /*
  * Check rate limit for a node.
+ *
+ * NOTE: We don't track per-node rate limits separately.
+ *       Node rate limit is approximated by address-based limit.
+ *
+ *       This function requires a mapping from node ID to address,
+ *       which is not available at this layer. Callers should use
+ *       wingo_dht_security_rate_limit_check() with the address.
+ *
+ *       For API compatibility, we return WINGO_DHT_SECURITY_ERROR
+ *       when we cannot determine the address, so callers know
+ *       to fall back to address-based check.
  */
 wingo_dht_security_result_t wingo_dht_security_rate_limit_check_node(
     wingo_dht_security_t *security,
     const wingo_dht_id_t *id)
 {
-    wingo_addr_t *addr = NULL;
-    wingo_dht_security_result_t result;
-
-    /*
-     * For nodes, we use the address-based rate limit.
-     * This is a simplification — we don't track per-node
-     * rate limits separately.
-     */
     if (security == NULL || id == NULL) {
         return WINGO_DHT_SECURITY_ERROR;
     }
@@ -878,13 +784,10 @@ wingo_dht_security_result_t wingo_dht_security_rate_limit_check_node(
     }
 
     /*
-     * We don't have the address, so we can't check rate limit.
-     * Return OK and let the caller handle it.
+     * We don't have ID → address mapping here.
+     * Return ERROR so caller knows to use address-based check.
      */
-    (void)addr;
-    (void)result;
-
-    return WINGO_DHT_SECURITY_OK;
+    return WINGO_DHT_SECURITY_ERROR;
 }
 
 /*
@@ -968,22 +871,15 @@ void wingo_dht_security_rate_limit_clear(wingo_dht_security_t *security)
  * MARTIAN ADDRESS CHECK
  * ============================================================================ */
 
-/*
- * Check if an address is martian (invalid).
- */
 bool wingo_dht_security_is_martian(const wingo_addr_t *addr)
 {
     if (addr == NULL) {
         return true;
     }
 
-    /* Use socket-level check */
     return wingo_addr_is_martian(addr);
 }
 
-/*
- * Check if an IP is private.
- */
 bool wingo_dht_security_is_private(const wingo_addr_t *addr)
 {
     char ip_str[WINGO_ADDR_STR_MAX];
@@ -1002,26 +898,17 @@ bool wingo_dht_security_is_private(const wingo_addr_t *addr)
     }
 
     /* 10.0.0.0/8 */
-    if (a == 10) {
-        return true;
-    }
+    if (a == 10) return true;
 
     /* 172.16.0.0/12 */
-    if (a == 172 && (b >= 16 && b <= 31)) {
-        return true;
-    }
+    if (a == 172 && b >= 16 && b <= 31) return true;
 
     /* 192.168.0.0/16 */
-    if (a == 192 && b == 168) {
-        return true;
-    }
+    if (a == 192 && b == 168) return true;
 
     return false;
 }
 
-/*
- * Check if an IP is loopback.
- */
 bool wingo_dht_security_is_loopback(const wingo_addr_t *addr)
 {
     if (addr == NULL) {
@@ -1031,9 +918,6 @@ bool wingo_dht_security_is_loopback(const wingo_addr_t *addr)
     return wingo_addr_is_loopback(addr);
 }
 
-/*
- * Check if an IP is multicast.
- */
 bool wingo_dht_security_is_multicast(const wingo_addr_t *addr)
 {
     if (addr == NULL) {
@@ -1047,9 +931,6 @@ bool wingo_dht_security_is_multicast(const wingo_addr_t *addr)
  * SYBIL PROTECTION
  * ============================================================================ */
 
-/*
- * Check if a node can be added to routing table.
- */
 wingo_dht_security_result_t wingo_dht_security_sybil_check(
     wingo_dht_security_t *security,
     const wingo_addr_t *addr)
@@ -1065,7 +946,6 @@ wingo_dht_security_result_t wingo_dht_security_sybil_check(
         return WINGO_DHT_SECURITY_OK;
     }
 
-    /* Only applies to IPv4 */
     if (!wingo_addr_is_ipv4(addr)) {
         return WINGO_DHT_SECURITY_OK;
     }
@@ -1088,9 +968,6 @@ wingo_dht_security_result_t wingo_dht_security_sybil_check(
     return WINGO_DHT_SECURITY_OK;
 }
 
-/*
- * Register a node in Sybil tracking.
- */
 wingo_error_t wingo_dht_security_sybil_register(
     wingo_dht_security_t *security,
     const wingo_addr_t *addr)
@@ -1125,9 +1002,6 @@ wingo_error_t wingo_dht_security_sybil_register(
     return WINGO_SUCCESS;
 }
 
-/*
- * Unregister a node from Sybil tracking.
- */
 wingo_error_t wingo_dht_security_sybil_unregister(
     wingo_dht_security_t *security,
     const wingo_addr_t *addr)
@@ -1160,7 +1034,6 @@ wingo_error_t wingo_dht_security_sybil_unregister(
             }
 
             if (entry->count == 0) {
-                /* Remove empty entry */
                 if (prev == NULL) {
                     security->sybil_head = entry->next;
                 } else {
@@ -1178,9 +1051,6 @@ wingo_error_t wingo_dht_security_sybil_unregister(
     return WINGO_ERR_NOT_FOUND;
 }
 
-/*
- * Get Sybil count for a subnet.
- */
 wingo_size wingo_dht_security_sybil_count(
     const wingo_dht_security_t *security,
     const wingo_addr_t *addr)
@@ -1210,9 +1080,6 @@ wingo_size wingo_dht_security_sybil_count(
     return 0;
 }
 
-/*
- * Clear Sybil tracking.
- */
 void wingo_dht_security_sybil_clear(wingo_dht_security_t *security)
 {
     sybil_entry_t *entry, *next;
@@ -1236,9 +1103,6 @@ void wingo_dht_security_sybil_clear(wingo_dht_security_t *security)
  * TOKEN VALIDATION (delegates to dht_token)
  * ============================================================================ */
 
-/*
- * Generate a token for an address.
- */
 wingo_error_t wingo_dht_security_token_generate(
     wingo_dht_security_t *security,
     const wingo_addr_t *addr,
@@ -1252,9 +1116,6 @@ wingo_error_t wingo_dht_security_token_generate(
     return wingo_dht_token_generate(security->token, addr, out, len);
 }
 
-/*
- * Verify a token for an address.
- */
 bool wingo_dht_security_token_verify(
     wingo_dht_security_t *security,
     const wingo_addr_t *addr,
@@ -1277,9 +1138,6 @@ bool wingo_dht_security_token_verify(
     return true;
 }
 
-/*
- * Rotate token secret.
- */
 wingo_error_t wingo_dht_security_token_rotate(
     wingo_dht_security_t *security)
 {
@@ -1290,9 +1148,6 @@ wingo_error_t wingo_dht_security_token_rotate(
     return wingo_dht_token_rotate(security->token);
 }
 
-/*
- * Get time until next token rotation.
- */
 wingo_i64 wingo_dht_security_token_next_rotate(
     const wingo_dht_security_t *security)
 {
@@ -1303,9 +1158,6 @@ wingo_i64 wingo_dht_security_token_next_rotate(
     return wingo_dht_token_next_rotate(security->token);
 }
 
-/*
- * Check if token rotation is needed.
- */
 bool wingo_dht_security_token_needs_rotate(
     const wingo_dht_security_t *security)
 {
@@ -1322,6 +1174,12 @@ bool wingo_dht_security_token_needs_rotate(
 
 /*
  * Validate source address.
+ *
+ * Checks:
+ *   1. Not martian
+ *   2. Not blacklisted
+ *   3. Rate limited
+ *   4. Sybil protected
  */
 wingo_dht_security_result_t wingo_dht_security_validate_source(
     wingo_dht_security_t *security,
@@ -1365,21 +1223,41 @@ wingo_dht_security_result_t wingo_dht_security_validate_source(
 /*
  * Check if a source address is spoofed.
  *
- * NOTE: This is a stub — real spoof detection requires
- *       more sophisticated techniques (e.g., TCP handshake,
- *       BGP validation).
+ * NOTE: Real spoof detection requires:
+ *   - TCP handshake verification
+ *   - BGP validation
+ *   - RPF (Reverse Path Forwarding)
+ *
+ * We can only do basic checks at this layer:
+ *   - Martian address
+ *   - Blacklisted address
+ *   - Multicast address
+ *
+ * If any of these are true, the address is suspicious.
  */
 bool wingo_dht_security_is_spoofed(
     const wingo_dht_security_t *security,
     const wingo_addr_t *addr)
 {
-    (void)security;
-    (void)addr;
+    if (security == NULL || addr == NULL) {
+        return true;
+    }
 
-    /*
-     * We can't detect spoofing at this layer.
-     * Return false — let higher layers handle it.
-     */
+    /* Martian addresses are definitely spoofed */
+    if (wingo_dht_security_is_martian(addr)) {
+        return true;
+    }
+
+    /* Multicast addresses should never be sources */
+    if (wingo_dht_security_is_multicast(addr)) {
+        return true;
+    }
+
+    /* Blacklisted addresses are suspicious */
+    if (wingo_dht_security_is_blacklisted_addr(security, addr)) {
+        return true;
+    }
+
     return false;
 }
 
@@ -1387,9 +1265,6 @@ bool wingo_dht_security_is_spoofed(
  * SECURITY STATISTICS
  * ============================================================================ */
 
-/*
- * Get security statistics.
- */
 wingo_error_t wingo_dht_security_get_stats(
     const wingo_dht_security_t *security,
     wingo_dht_security_stats_t *stats)
@@ -1400,7 +1275,6 @@ wingo_error_t wingo_dht_security_get_stats(
 
     memcpy(stats, &security->stats, sizeof(wingo_dht_security_stats_t));
 
-    /* Fill in current sizes */
     stats->blacklist_size = security->blacklist_count;
     stats->rate_limit_entries = security->rate_count;
     stats->sybil_subnets = security->sybil_count;
@@ -1408,9 +1282,6 @@ wingo_error_t wingo_dht_security_get_stats(
     return WINGO_SUCCESS;
 }
 
-/*
- * Reset security statistics.
- */
 void wingo_dht_security_reset_stats(wingo_dht_security_t *security)
 {
     if (security == NULL) {
@@ -1424,9 +1295,6 @@ void wingo_dht_security_reset_stats(wingo_dht_security_t *security)
  * SECURITY UTILITY
  * ============================================================================ */
 
-/*
- * Get security result name.
- */
 const char *wingo_dht_security_result_name(
     wingo_dht_security_result_t result)
 {
@@ -1443,9 +1311,6 @@ const char *wingo_dht_security_result_name(
     }
 }
 
-/*
- * Get blacklist reason name.
- */
 const char *wingo_dht_blacklist_reason_name(
     wingo_dht_blacklist_reason_t reason)
 {
@@ -1459,9 +1324,6 @@ const char *wingo_dht_blacklist_reason_name(
     }
 }
 
-/*
- * Print security status.
- */
 void wingo_dht_security_print(const wingo_dht_security_t *security, FILE *f)
 {
     if (f == NULL) {
@@ -1505,9 +1367,6 @@ void wingo_dht_security_print(const wingo_dht_security_t *security, FILE *f)
             (unsigned long long)security->stats.token_rotations);
 }
 
-/*
- * Print blacklist.
- */
 void wingo_dht_security_print_blacklist(
     const wingo_dht_security_t *security,
     FILE *f)
@@ -1532,14 +1391,12 @@ void wingo_dht_security_print_blacklist(
         wingo_size i;
         static const char hex[] = "0123456789abcdef";
 
-        /* ID hex */
         for (i = 0; i < WINGO_DHT_ID_SIZE; i++) {
             id_hex[i * 2]     = hex[(entry->id.bytes[i] >> 4) & 0x0F];
             id_hex[i * 2 + 1] = hex[entry->id.bytes[i] & 0x0F];
         }
         id_hex[WINGO_DHT_ID_SIZE * 2] = '\0';
 
-        /* Address string */
         if (entry->addr != NULL) {
             wingo_addr_str(entry->addr, addr_str, sizeof(addr_str));
         } else {
