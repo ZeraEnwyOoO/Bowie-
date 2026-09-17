@@ -56,6 +56,7 @@
  */
 
 #include "wingo/net/dht/dht_token.h"
+#include "wingo/net/dht/dht_types.h"
 #include "wingo/log.h"
 #include "wingo/util/time.h"
 #include "wingo/util/random.h"
