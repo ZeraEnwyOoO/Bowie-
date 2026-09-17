@@ -1,4 +1,4 @@
-/*
+ /*
  * Wingo — P2P Internet Sharing Tool (Repo: Bowie)
  * Copyright (C) 2024 ASBM Team
  *
@@ -24,37 +24,24 @@
  * WINGO DHT SECURITY
  * ============================================================================
  *
- * This header provides security for Bowie DHT:
- *   - Blacklist (malicious nodes)
- *   - Martian check (invalid addresses)
- *   - Rate limiting (per-IP)
- *   - Node verification
+ * This header provides DHT security mechanisms for Bowie.
  *
- * Architecture:
+ * Security layers:
  *
  *   ┌─────────────────────────────────────────────────────────────┐
  *   │                    DHT SECURITY                             │
  *   │                                                             │
  *   │   ┌─────────────┐  ┌─────────────┐  ┌─────────────┐        │
- *   │   │  Blacklist  │  │  Martian    │  │   Rate      │        │
- *   │   │             │  │   Check     │  │   Limit     │        │
- *   │   │  - Add      │  │             │  │             │        │
- *   │   │  - Remove   │  │  - IPv4     │  │  - Per-IP   │        │
- *   │   │  - Check    │  │  - IPv6     │  │  - Global   │        │
-│   │   │             │  │             │  │             │        │
-│   │   └─────────────┘  └─────────────┘  └─────────────┘        │
-│   │                                                             │
-│   │   ┌─────────────────────────────────────────────────────┐   │
-│   │   │              NODE VERIFICATION                      │   │
-│   │   │                                                     │   │
-│   │   │   - ID Valid                                        │   │
-│   │   │   - Not Self                                        │   │
-│   │   │   - Not Blacklisted                                 │   │
-│   │   │   - Not Martian                                     │   │
-│   │   │   - Rate OK                                         │   │
-│   │   └─────────────────────────────────────────────────────┘   │
-│   │                                                             │
-│   └─────────────────────────────────────────────────────────────┘
+ *   │   │  Blacklist  │  │  Rate       │  │  Token      │        │
+ *   │   │             │  │  Limiting   │  │  Validation │        │
+ *   │   └─────────────┘  └─────────────┘  └─────────────┘        │
+ *   │                                                             │
+ *   │   ┌─────────────┐  ┌─────────────┐  ┌─────────────┐        │
+ *   │   │  Martian    │  │  Sybil      │  │  IP         │        │
+ *   │   │  Address    │  │  Protection │  │  Validation │        │
+ *   │   └─────────────┘  └─────────────┘  └─────────────┘        │
+ *   │                                                             │
+ *   └─────────────────────────────────────────────────────────────┘
  *
  * ============================================================================
  */
@@ -69,59 +56,68 @@
  * ============================================================================ */
 
 /*
- * Default blacklist size.
+ * Maximum blacklist entries.
  */
-#define WINGO_DHT_BLACKLIST_DEFAULT_SIZE    10
+#define WINGO_DHT_SECURITY_MAX_BLACKLIST        4096
 
 /*
- * Maximum blacklist size.
+ * Blacklist entry default TTL (1 hour).
  */
-#define WINGO_DHT_BLACKLIST_MAX_SIZE        1024
+#define WINGO_DHT_SECURITY_BLACKLIST_TTL        (60 * 60)
 
 /*
- * Default rate limit (messages per second).
+ * Rate limit: messages per second per IP.
  */
-#define WINGO_DHT_RATE_LIMIT_DEFAULT        100
+#define WINGO_DHT_SECURITY_RATE_PER_IP          20
 
 /*
- * Default rate window (seconds).
+ * Rate limit: messages per second per node.
  */
-#define WINGO_DHT_RATE_WINDOW_DEFAULT       1
+#define WINGO_DHT_SECURITY_RATE_PER_NODE        40
 
 /*
- * Default per-IP rate limit (messages per window).
+ * Rate limit: global messages per second.
  */
-#define WINGO_DHT_RATE_PER_IP_DEFAULT       10
+#define WINGO_DHT_SECURITY_RATE_GLOBAL          2000
 
 /*
- * Rate entry expire time (seconds).
+ * Maximum nodes per subnet (Sybil protection).
  */
-#define WINGO_DHT_RATE_ENTRY_EXPIRE         (60 * 5)
+#define WINGO_DHT_SECURITY_MAX_PER_SUBNET       4
+
+/*
+ * Token size (8 bytes).
+ */
+#define WINGO_DHT_SECURITY_TOKEN_SIZE           8
 
 /* ============================================================================
  * DHT SECURITY TYPES
  * ============================================================================ */
 
 /*
- * Blacklist entry.
+ * Security result.
  */
-typedef struct {
-    wingo_dht_id_t      id;         /* Node ID (may be zero) */
-    wingo_addr_t        addr;       /* Node address */
-    wingo_i64           added;      /* When added */
-    wingo_i64           expires;    /* When expires (0 = never) */
-    char                reason[128];/* Reason (may be empty) */
-} wingo_dht_blacklist_entry_t;
+typedef enum {
+    WINGO_DHT_SECURITY_OK           = 0,   /* Allowed */
+    WINGO_DHT_SECURITY_BLOCKED      = 1,   /* Blocked (blacklist) */
+    WINGO_DHT_SECURITY_RATE_LIMITED = 2,   /* Rate limited */
+    WINGO_DHT_SECURITY_MARTIAN      = 3,   /* Martian address */
+    WINGO_DHT_SECURITY_SYBIL        = 4,   /* Sybil detected */
+    WINGO_DHT_SECURITY_BAD_TOKEN    = 5,   /* Invalid token */
+    WINGO_DHT_SECURITY_SPOOFED      = 6,   /* Spoofed source */
+    WINGO_DHT_SECURITY_ERROR        = 7,   /* Internal error */
+} wingo_dht_security_result_t;
 
 /*
- * Rate entry.
+ * Blacklist reason.
  */
-typedef struct {
-    wingo_addr_t        addr;       /* IP address */
-    wingo_u32           count;      /* Message count */
-    wingo_i64           window_start;/* Window start time */
-    wingo_i64           last_seen;  /* Last seen time */
-} wingo_dht_rate_entry_t;
+typedef enum {
+    WINGO_DHT_BLACKLIST_REASON_NONE     = 0,
+    WINGO_DHT_BLACKLIST_REASON_ABUSE    = 1,
+    WINGO_DHT_BLACKLIST_REASON_SPAM     = 2,
+    WINGO_DHT_BLACKLIST_REASON_INVALID  = 3,
+    WINGO_DHT_BLACKLIST_REASON_MANUAL   = 4,
+} wingo_dht_blacklist_reason_t;
 
 /* ============================================================================
  * DHT SECURITY STRUCTURE (OPAQUE)
@@ -129,346 +125,261 @@ typedef struct {
 
 /*
  * DHT security handle.
+ *
+ * NOTE: This is the ONLY definition of this opaque type in Bowie.
  */
 typedef struct wingo_dht_security wingo_dht_security_t;
 
 /* ============================================================================
- * SECURITY LIFECYCLE
+ * DHT SECURITY LIFECYCLE
  * ============================================================================ */
 
 /*
- * Create a new security instance.
+ * Create a new DHT security instance.
  *
- * @param blacklist_size Maximum blacklist size
- * @param rate_limit     Rate limit (messages per second)
- * @return               Security instance, or NULL on error
+ * @param max_blacklist     Maximum blacklist entries (0 = default)
+ * @param enable_rate_limit Enable rate limiting
+ * @param enable_sybil      Enable Sybil protection
+ * @return                  Security handle, or NULL on error
  */
-wingo_dht_security_t *wingo_dht_security_new(wingo_size blacklist_size,
-                                              wingo_size rate_limit);
+wingo_dht_security_t *wingo_dht_security_new(wingo_size max_blacklist,
+                                              bool enable_rate_limit,
+                                              bool enable_sybil);
 
 /*
- * Free a security instance.
+ * Free a DHT security instance.
  *
- * @param sec       Security instance (NULL is safe)
+ * @param security  Security handle (NULL is safe)
  */
-void wingo_dht_security_free(wingo_dht_security_t *sec);
+void wingo_dht_security_free(wingo_dht_security_t *security);
+
+/*
+ * Reset security state.
+ *
+ * @param security  Security handle
+ * @return          WINGO_SUCCESS on success, error code on failure
+ */
+wingo_error_t wingo_dht_security_reset(wingo_dht_security_t *security);
 
 /* ============================================================================
  * BLACKLIST
  * ============================================================================ */
 
 /*
+ * Add a node to blacklist (by ID).
+ */
+wingo_error_t wingo_dht_security_blacklist_add(wingo_dht_security_t *security,
+                                                const wingo_dht_id_t *id,
+                                                wingo_dht_blacklist_reason_t reason,
+                                                wingo_i64 duration_s);
+
+/*
  * Add an address to blacklist.
- *
- * @param sec       Security instance
- * @param addr      Address to blacklist
- * @param reason    Reason (may be NULL)
- * @return          WINGO_SUCCESS on success, error code on failure
  */
-wingo_error_t wingo_dht_security_blacklist_addr(wingo_dht_security_t *sec,
-                                                 const wingo_addr_t *addr,
-                                                 const char *reason);
+wingo_error_t wingo_dht_security_blacklist_add_addr(
+    wingo_dht_security_t *security,
+    const wingo_addr_t *addr,
+    wingo_dht_blacklist_reason_t reason,
+    wingo_i64 duration_s);
 
 /*
- * Add a node ID to blacklist.
- *
- * @param sec       Security instance
- * @param id        Node ID to blacklist
- * @param reason    Reason (may be NULL)
- * @return          WINGO_SUCCESS on success, error code on failure
+ * Remove a node from blacklist.
  */
-wingo_error_t wingo_dht_security_blacklist_id(wingo_dht_security_t *sec,
-                                               const wingo_dht_id_t *id,
-                                               const char *reason);
-
-/*
- * Add a node to blacklist (ID + address).
- *
- * @param sec       Security instance
- * @param id        Node ID (may be NULL)
- * @param addr      Address (may be NULL)
- * @param reason    Reason (may be NULL)
- * @return          WINGO_SUCCESS on success, error code on failure
- */
-wingo_error_t wingo_dht_security_blacklist(wingo_dht_security_t *sec,
-                                            const wingo_dht_id_t *id,
-                                            const wingo_addr_t *addr,
-                                            const char *reason);
+wingo_error_t wingo_dht_security_blacklist_remove(
+    wingo_dht_security_t *security,
+    const wingo_dht_id_t *id);
 
 /*
  * Remove an address from blacklist.
- *
- * @param sec       Security instance
- * @param addr      Address
- * @return          WINGO_SUCCESS on success, error code on failure
  */
-wingo_error_t wingo_dht_security_unblacklist_addr(wingo_dht_security_t *sec,
-                                                   const wingo_addr_t *addr);
+wingo_error_t wingo_dht_security_blacklist_remove_addr(
+    wingo_dht_security_t *security,
+    const wingo_addr_t *addr);
 
 /*
- * Remove a node ID from blacklist.
- *
- * @param sec       Security instance
- * @param id        Node ID
- * @return          WINGO_SUCCESS on success, error code on failure
+ * Check if a node is blacklisted.
  */
-wingo_error_t wingo_dht_security_unblacklist_id(wingo_dht_security_t *sec,
-                                                 const wingo_dht_id_t *id);
+bool wingo_dht_security_is_blacklisted(const wingo_dht_security_t *security,
+                                        const wingo_dht_id_t *id);
 
 /*
- * Check if address is blacklisted.
- *
- * @param sec       Security instance
- * @param addr      Address
- * @return          true if blacklisted, false otherwise
+ * Check if an address is blacklisted.
  */
-bool wingo_dht_security_is_blacklisted_addr(const wingo_dht_security_t *sec,
-                                             const wingo_addr_t *addr);
-
-/*
- * Check if node ID is blacklisted.
- *
- * @param sec       Security instance
- * @param id        Node ID
- * @return          true if blacklisted, false otherwise
- */
-bool wingo_dht_security_is_blacklisted_id(const wingo_dht_security_t *sec,
-                                           const wingo_dht_id_t *id);
-
-/*
- * Check if node is blacklisted.
- *
- * @param sec       Security instance
- * @param id        Node ID (may be NULL)
- * @param addr      Address (may be NULL)
- * @return          true if blacklisted, false otherwise
- */
-bool wingo_dht_security_is_blacklisted(const wingo_dht_security_t *sec,
-                                        const wingo_dht_id_t *id,
-                                        const wingo_addr_t *addr);
+bool wingo_dht_security_is_blacklisted_addr(
+    const wingo_dht_security_t *security,
+    const wingo_addr_t *addr);
 
 /*
  * Get blacklist entry count.
- *
- * @param sec       Security instance
- * @return          Number of entries
  */
 wingo_size wingo_dht_security_blacklist_count(
-    const wingo_dht_security_t *sec);
-
-/*
- * Get blacklist entry at index.
- *
- * @param sec       Security instance
- * @param index     Index
- * @return          Entry, or NULL if out of range
- */
-const wingo_dht_blacklist_entry_t *wingo_dht_security_blacklist_entry(
-    const wingo_dht_security_t *sec,
-    wingo_size index);
+    const wingo_dht_security_t *security);
 
 /*
  * Clear blacklist.
- *
- * @param sec       Security instance
  */
-void wingo_dht_security_blacklist_clear(wingo_dht_security_t *sec);
+void wingo_dht_security_blacklist_clear(wingo_dht_security_t *security);
 
 /*
  * Expire blacklist entries.
- *
- * @param sec       Security instance
- * @return          Number of entries expired
  */
-wingo_size wingo_dht_security_blacklist_expire(wingo_dht_security_t *sec);
+wingo_size wingo_dht_security_blacklist_expire(
+    wingo_dht_security_t *security);
 
 /* ============================================================================
- * MARTIAN CHECK
- * ============================================================================ */
-
-/*
- * Check if address is martian (invalid).
- *
- * Martian addresses:
- *   - 0.0.0.0/8, 127.0.0.0/8, 224.0.0.0/4, 240.0.0.0/4
- *   - ::, ::1, ff00::/8, fe80::/10
- *   - IPv4-mapped IPv6
- *
- * @param addr      Address to check
- * @return          true if martian, false otherwise
- */
-bool wingo_dht_security_is_martian(const wingo_addr_t *addr);
-
-/*
- * Check if address is a valid public address.
- *
- * @param addr      Address to check
- * @return          true if public, false otherwise
- */
-bool wingo_dht_security_is_public(const wingo_addr_t *addr);
-
-/*
- * Check if address is private (RFC 1918 / RFC 4193).
- *
- * @param addr      Address to check
- * @return          true if private, false otherwise
- */
-bool wingo_dht_security_is_private(const wingo_addr_t *addr);
-
-/* ============================================================================
- * RATE LIMIT
+ * RATE LIMITING
  * ============================================================================ */
 
 /*
  * Check rate limit for an address.
- *
- * @param sec       Security instance
- * @param addr      Address
- * @return          true if rate OK, false otherwise
  */
-bool wingo_dht_security_rate_ok(wingo_dht_security_t *sec,
-                                 const wingo_addr_t *addr);
-
-/*
- * Check global rate limit.
- *
- * @param sec       Security instance
- * @return          true if rate OK, false otherwise
- */
-bool wingo_dht_security_rate_ok_global(wingo_dht_security_t *sec);
-
-/*
- * Check if address is rate limited.
- *
- * @param sec       Security instance
- * @param addr      Address
- * @return          true if rate limited, false otherwise
- */
-bool wingo_dht_security_is_rate_limited(const wingo_dht_security_t *sec,
-                                         const wingo_addr_t *addr);
-
-/*
- * Get rate entry count.
- *
- * @param sec       Security instance
- * @return          Number of entries
- */
-wingo_size wingo_dht_security_rate_count(const wingo_dht_security_t *sec);
-
-/*
- * Expire rate entries.
- *
- * @param sec       Security instance
- * @return          Number of entries expired
- */
-wingo_size wingo_dht_security_rate_expire(wingo_dht_security_t *sec);
-
-/*
- * Clear rate entries.
- *
- * @param sec       Security instance
- */
-void wingo_dht_security_rate_clear(wingo_dht_security_t *sec);
-
-/*
- * Set rate limit.
- *
- * @param sec       Security instance
- * @param rate      Rate limit (messages per second)
- */
-void wingo_dht_security_set_rate_limit(wingo_dht_security_t *sec,
-                                        wingo_size rate);
-
-/*
- * Get rate limit.
- *
- * @param sec       Security instance
- * @return          Rate limit
- */
-wingo_size wingo_dht_security_get_rate_limit(
-    const wingo_dht_security_t *sec);
-
-/*
- * Set per-IP rate limit.
- *
- * @param sec       Security instance
- * @param rate      Per-IP rate limit (messages per window)
- */
-void wingo_dht_security_set_rate_per_ip(wingo_dht_security_t *sec,
-                                         wingo_size rate);
-
-/*
- * Get per-IP rate limit.
- *
- * @param sec       Security instance
- * @return          Per-IP rate limit
- */
-wingo_size wingo_dht_security_get_rate_per_ip(
-    const wingo_dht_security_t *sec);
-
-/* ============================================================================
- * NODE VERIFICATION
- * ============================================================================ */
-
-/*
- * Verification result.
- */
-typedef enum {
-    WINGO_DHT_VERIFY_OK              = 0,
-    WINGO_DHT_VERIFY_INVALID_ID      = 1,
-    WINGO_DHT_VERIFY_SELF            = 2,
-    WINGO_DHT_VERIFY_BLACKLISTED     = 3,
-    WINGO_DHT_VERIFY_MARTIAN         = 4,
-    WINGO_DHT_VERIFY_RATE_LIMITED    = 5,
-    WINGO_DHT_VERIFY_INVALID_ADDR    = 6,
-} wingo_dht_verify_result_t;
-
-/*
- * Verify a node.
- *
- * @param sec       Security instance
- * @param my_id     My node ID
- * @param id        Node ID (may be NULL)
- * @param addr      Node address (may be NULL)
- * @return          Verification result
- */
-wingo_dht_verify_result_t wingo_dht_security_verify_node(
-    wingo_dht_security_t *sec,
-    const wingo_dht_id_t *my_id,
-    const wingo_dht_id_t *id,
+wingo_dht_security_result_t wingo_dht_security_rate_limit_check(
+    wingo_dht_security_t *security,
     const wingo_addr_t *addr);
 
 /*
- * Verify a node ID.
- *
- * @param sec       Security instance
- * @param my_id     My node ID
- * @param id        Node ID
- * @return          Verification result
+ * Check rate limit for a node.
  */
-wingo_dht_verify_result_t wingo_dht_security_verify_id(
-    const wingo_dht_security_t *sec,
-    const wingo_dht_id_t *my_id,
+wingo_dht_security_result_t wingo_dht_security_rate_limit_check_node(
+    wingo_dht_security_t *security,
     const wingo_dht_id_t *id);
 
 /*
- * Verify an address.
- *
- * @param sec       Security instance
- * @param addr      Address
- * @return          Verification result
+ * Get rate limit count for an address.
  */
-wingo_dht_verify_result_t wingo_dht_security_verify_addr(
-    const wingo_dht_security_t *sec,
+wingo_size wingo_dht_security_rate_limit_count(
+    const wingo_dht_security_t *security,
     const wingo_addr_t *addr);
 
 /*
- * Get verification result name.
- *
- * @param result    Verification result
- * @return          Static string
+ * Reset rate limit for an address.
  */
-const char *wingo_dht_verify_result_name(wingo_dht_verify_result_t result);
+void wingo_dht_security_rate_limit_reset(wingo_dht_security_t *security,
+                                          const wingo_addr_t *addr);
+
+/*
+ * Clear all rate limits.
+ */
+void wingo_dht_security_rate_limit_clear(wingo_dht_security_t *security);
+
+/* ============================================================================
+ * MARTIAN ADDRESS CHECK
+ * ============================================================================ */
+
+/*
+ * Check if an address is martian (invalid).
+ */
+bool wingo_dht_security_is_martian(const wingo_addr_t *addr);
+
+/*
+ * Check if an IP is private.
+ */
+bool wingo_dht_security_is_private(const wingo_addr_t *addr);
+
+/*
+ * Check if an IP is loopback.
+ */
+bool wingo_dht_security_is_loopback(const wingo_addr_t *addr);
+
+/*
+ * Check if an IP is multicast.
+ */
+bool wingo_dht_security_is_multicast(const wingo_addr_t *addr);
+
+/* ============================================================================
+ * SYBIL PROTECTION
+ * ============================================================================ */
+
+/*
+ * Check if a node can be added to routing table.
+ */
+wingo_dht_security_result_t wingo_dht_security_sybil_check(
+    wingo_dht_security_t *security,
+    const wingo_addr_t *addr);
+
+/*
+ * Register a node in Sybil tracking.
+ */
+wingo_error_t wingo_dht_security_sybil_register(
+    wingo_dht_security_t *security,
+    const wingo_addr_t *addr);
+
+/*
+ * Unregister a node from Sybil tracking.
+ */
+wingo_error_t wingo_dht_security_sybil_unregister(
+    wingo_dht_security_t *security,
+    const wingo_addr_t *addr);
+
+/*
+ * Get Sybil count for a subnet.
+ */
+wingo_size wingo_dht_security_sybil_count(
+    const wingo_dht_security_t *security,
+    const wingo_addr_t *addr);
+
+/*
+ * Clear Sybil tracking.
+ */
+void wingo_dht_security_sybil_clear(wingo_dht_security_t *security);
+
+/* ============================================================================
+ * TOKEN VALIDATION (delegates to dht_token)
+ * ============================================================================ */
+
+/*
+ * Generate a token for an address.
+ */
+wingo_error_t wingo_dht_security_token_generate(
+    wingo_dht_security_t *security,
+    const wingo_addr_t *addr,
+    wingo_u8 *out,
+    wingo_size len);
+
+/*
+ * Verify a token for an address.
+ */
+bool wingo_dht_security_token_verify(
+    wingo_dht_security_t *security,
+    const wingo_addr_t *addr,
+    const wingo_u8 *token,
+    wingo_size len);
+
+/*
+ * Rotate token secret.
+ */
+wingo_error_t wingo_dht_security_token_rotate(
+    wingo_dht_security_t *security);
+
+/*
+ * Get time until next token rotation.
+ */
+wingo_i64 wingo_dht_security_token_next_rotate(
+    const wingo_dht_security_t *security);
+
+/*
+ * Check if token rotation is needed.
+ */
+bool wingo_dht_security_token_needs_rotate(
+    const wingo_dht_security_t *security);
+
+/* ============================================================================
+ * IP VALIDATION
+ * ============================================================================ */
+
+/*
+ * Validate source address.
+ */
+wingo_dht_security_result_t wingo_dht_security_validate_source(
+    wingo_dht_security_t *security,
+    const wingo_addr_t *addr);
+
+/*
+ * Check if a source address is spoofed.
+ */
+bool wingo_dht_security_is_spoofed(
+    const wingo_dht_security_t *security,
+    const wingo_addr_t *addr);
 
 /* ============================================================================
  * SECURITY STATISTICS
@@ -478,64 +389,58 @@ const char *wingo_dht_verify_result_name(wingo_dht_verify_result_t result);
  * Security statistics.
  */
 typedef struct {
-    wingo_u64   blacklist_adds;         /* Blacklist additions */
-    wingo_u64   blacklist_removes;      /* Blacklist removals */
-    wingo_u64   blacklist_hits;         /* Blacklist hits */
-    wingo_u64   martian_hits;           /* Martian hits */
-    wingo_u64   rate_limited;           /* Rate limited */
-    wingo_u64   verify_ok;              /* Verification OK */
-    wingo_u64   verify_failed;          /* Verification failed */
-    wingo_size  blacklist_size;         /* Current blacklist size */
-    wingo_size  rate_size;              /* Current rate size */
+    wingo_u64   packets_allowed;
+    wingo_u64   packets_blocked;
+    wingo_u64   packets_rate_limited;
+    wingo_u64   packets_martian;
+    wingo_u64   packets_sybil;
+    wingo_u64   packets_bad_token;
+    wingo_u64   packets_spoofed;
+    wingo_size  blacklist_size;
+    wingo_size  rate_limit_entries;
+    wingo_size  sybil_subnets;
+    wingo_u64   token_rotations;
 } wingo_dht_security_stats_t;
 
 /*
  * Get security statistics.
- *
- * @param sec       Security instance
- * @param stats     Output statistics
- * @return          WINGO_SUCCESS on success, error code on failure
  */
 wingo_error_t wingo_dht_security_get_stats(
-    const wingo_dht_security_t *sec,
+    const wingo_dht_security_t *security,
     wingo_dht_security_stats_t *stats);
 
 /*
  * Reset security statistics.
- *
- * @param sec       Security instance
  */
-void wingo_dht_security_reset_stats(wingo_dht_security_t *sec);
+void wingo_dht_security_reset_stats(wingo_dht_security_t *security);
 
 /* ============================================================================
  * SECURITY UTILITY
  * ============================================================================ */
 
 /*
- * Print security status.
- *
- * @param sec       Security instance
- * @param f         Output file (NULL = stderr)
+ * Get security result name.
  */
-void wingo_dht_security_print(const wingo_dht_security_t *sec, FILE *f);
+const char *wingo_dht_security_result_name(
+    wingo_dht_security_result_t result);
+
+/*
+ * Get blacklist reason name.
+ */
+const char *wingo_dht_blacklist_reason_name(
+    wingo_dht_blacklist_reason_t reason);
+
+/*
+ * Print security status.
+ */
+void wingo_dht_security_print(const wingo_dht_security_t *security, FILE *f);
 
 /*
  * Print blacklist.
- *
- * @param sec       Security instance
- * @param f         Output file (NULL = stderr)
  */
-void wingo_dht_security_print_blacklist(const wingo_dht_security_t *sec,
-                                         FILE *f);
-
-/*
- * Print rate entries.
- *
- * @param sec       Security instance
- * @param f         Output file (NULL = stderr)
- */
-void wingo_dht_security_print_rate(const wingo_dht_security_t *sec,
-                                    FILE *f);
+void wingo_dht_security_print_blacklist(
+    const wingo_dht_security_t *security,
+    FILE *f);
 
 /* ============================================================================
  * END OF HEADER
