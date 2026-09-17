@@ -83,6 +83,7 @@
 #include "wingo/common.h"
 #include "wingo/error.h"
 #include "wingo/net/socket.h"
+#include "wingo/net/dht/dht_types.h"   /* provides wingo_dht_token_t typedef */
 
 /* ============================================================================
  * DHT TOKEN CONSTANTS
@@ -150,8 +151,11 @@ typedef struct {
  * DHT token manager handle.
  *
  * This is an opaque type. Use wingo_dht_token_*() functions.
+ *
+ * NOTE: The typedef `wingo_dht_token_t` is already declared in
+ *       "wingo/net/dht/dht_types.h". Do NOT redeclare it here —
+ *       that would cause a duplicate-typedef compile error.
  */
-typedef struct wingo_dht_token wingo_dht_token_t;
 
 /* ============================================================================
  * DHT TOKEN LIFECYCLE
@@ -462,4 +466,6 @@ bool wingo_dht_token_equal(const wingo_u8 *a, const wingo_u8 *b, wingo_size len)
  * END OF HEADER
  * ============================================================================ */
 
-#endif /* WINGO_NET_DHT_TOKEN_H */
+#endif /* WINGO_NET_DHT_TOKEN_H */ 
+ 
+ 
