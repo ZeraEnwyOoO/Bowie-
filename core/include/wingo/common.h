@@ -547,16 +547,7 @@ static inline void wingo_id_to_hex(const wingo_id *id, char *out)
     out[WINGO_ID_SIZE * 2] = '\0';
 }
 
-/* ============================================================================
- * ERROR CODES (via error.h)
- * ============================================================================ */
 
-/*
- * Include error.h at the END of common.h.
- *
- * This is necessary because error.h includes common.h for types.
- * The include guard in error.h prevents infinite recursion.
- */
  
 
 /* ============================================================================
