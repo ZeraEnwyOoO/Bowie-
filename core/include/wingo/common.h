@@ -557,7 +557,7 @@ static inline void wingo_id_to_hex(const wingo_id *id, char *out)
  * This is necessary because error.h includes common.h for types.
  * The include guard in error.h prevents infinite recursion.
  */
-#include "wingo/error.h"
+ 
 
 /* ============================================================================
  * END OF HEADER
